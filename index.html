@@ -13,8 +13,8 @@
     <meta name="apple-mobile-web-app-title" content="Daily Flow">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=24">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=25">
     <script src="https://apis.google.com/js/api.js"></script>
     <script src="https://accounts.google.com/gsi/client"></script>
     <!-- Firebase SDKs (Compat version for simplicity in pure JS) -->
@@ -31,6 +31,18 @@
     </script>
 </head>
 <body>
+    <script>
+        (function(){
+            try {
+                var s = JSON.parse(localStorage.getItem('taskAppState') || '{}');
+                var m = s.settings && s.settings.layoutMode || 'auto';
+                var c = m === 'mobile' ? 'mobile-layout' : m === 'pc' ? 'pc-layout' : (window.innerWidth <= 768 ? 'mobile-layout' : 'pc-layout');
+                document.body.classList.add(c);
+            } catch(e) {
+                document.body.classList.add(window.innerWidth <= 768 ? 'mobile-layout' : 'pc-layout');
+            }
+        })();
+    </script>
     <div class="app-container">
         <!-- Sidebar / Navigation -->
         <nav class="sidebar">

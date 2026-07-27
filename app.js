@@ -792,12 +792,8 @@ function init() {
     applyLayoutMode();
     setupEventListeners();
     
-    let lastWidth = window.innerWidth;
-    window.addEventListener('resize', () => {
-        // Only proceed if width actually changed (prevents issues with mobile address bars)
-        if (window.innerWidth === lastWidth) return;
-        lastWidth = window.innerWidth;
-
+    const mql = window.matchMedia('(max-width: 768px)');
+    mql.addEventListener('change', () => {
         if (state.settings && state.settings.layoutMode === 'auto') {
             const changed = applyLayoutMode();
             if (changed && document.getElementById('view-schedule').classList.contains('active')) {
