@@ -1,19 +1,19 @@
 :root {
-    --bg-color: #0b0f19;
-    --panel-bg: rgba(20, 25, 40, 0.6);
+    --bg-color: #0a0a0a;
+    --panel-bg: rgba(18, 18, 18, 0.85);
     --panel-border: rgba(255, 255, 255, 0.08);
     --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --primary-color: #6366f1;
-    --primary-hover: #4f46e5;
-    --primary-glow: rgba(99, 102, 241, 0.4);
-    --success-color: #10b981;
+    --text-secondary: #a1a1aa;
+    --primary-color: #f97316;
+    --primary-hover: #ea580c;
+    --primary-glow: rgba(249, 115, 22, 0.4);
+    --success-color: #22c55e;
     --danger-color: #ef4444;
     --tag-lecture: #3b82f6;
-    --tag-study: #10b981;
+    --tag-study: #22c55e;
     --tag-hobby: #f59e0b;
     --tag-exercise: #ec4899;
-    --tag-task: #8b5cf6;
+    --tag-task: #fb923c;
     --tag-calendar: #ef4444;
     --sidebar-width: 260px;
     --radius-sm: 8px;
@@ -35,8 +35,8 @@ body {
     -moz-osx-font-smoothing: grayscale;
     background-color: var(--bg-color);
     background-image: 
-        radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.15), transparent 25%),
-        radial-gradient(circle at 85% 30%, rgba(16, 185, 129, 0.1), transparent 25%);
+        radial-gradient(circle at 15% 50%, rgba(249, 115, 22, 0.1), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(251, 146, 60, 0.06), transparent 25%);
     color: var(--text-primary);
     min-height: 100vh;
     overflow-x: hidden;
@@ -113,8 +113,8 @@ body {
 
 .nav-links li.active {
     color: var(--text-primary);
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    background: rgba(249, 115, 22, 0.15);
+    border: 1px solid rgba(249, 115, 22, 0.3);
 }
 
 .main-content {
@@ -427,7 +427,7 @@ textarea {
 
 .tag-routine {
     color: var(--primary-color);
-    background: rgba(99, 102, 241, 0.1);
+    background: rgba(249, 115, 22, 0.1);
     padding: 2px 6px;
     border-radius: 4px;
 }
@@ -873,7 +873,7 @@ textarea {
 }
 
 .weekly-header.today {
-    background: rgba(99, 102, 241, 0.2);
+    background: rgba(249, 115, 22, 0.2);
 }
 
 .weekly-day {
@@ -1004,6 +1004,9 @@ textarea {
     word-break: break-all;
 }
 
+/* Mobile-only "more" button — hidden on desktop */
+.mobile-only-nav { display: none !important; }
+
 /* ==============================================
    Mobile Layout Override
    ============================================== */
@@ -1112,6 +1115,82 @@ textarea {
     padding: 1.5rem;
 }
 
+/* Mobile: show only dashboard, timer, schedule + "more" */
+.mobile-layout .nav-links li[data-view="history"],
+.mobile-layout .nav-links li[data-view="stats"],
+.mobile-layout .nav-links li[data-view="goals"],
+.mobile-layout .nav-links li[data-view="principles"],
+.mobile-layout .nav-links li[data-view="review"],
+.mobile-layout .nav-links li[data-view="settings"] {
+    display: none;
+}
+.mobile-layout .mobile-only-nav {
+    display: flex !important;
+}
+.mobile-layout .nav-links {
+    justify-content: space-around;
+    overflow-x: visible;
+}
+.mobile-layout .nav-links li {
+    min-width: 0;
+    flex: 1;
+    padding: 6px 4px;
+    font-size: 0.65rem;
+}
+
+/* Mobile more menu sheet */
+.mobile-more-menu {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+}
+.mobile-more-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+}
+.mobile-more-sheet {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #1a1a1a;
+    border-radius: 16px 16px 0 0;
+    padding: 8px 0 calc(80px + env(safe-area-inset-bottom));
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.mobile-more-handle {
+    width: 36px;
+    height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    margin: 4px auto 12px;
+}
+.mobile-more-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.mobile-more-list li {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 24px;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.mobile-more-list li:active {
+    background: rgba(249,115,22,0.12);
+}
+.mobile-more-list li svg {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    stroke: var(--text-secondary);
+}
+
 
 /* ==============================================
    Timer Record Schedule Overlap Styles
@@ -1192,7 +1271,7 @@ textarea {
     max-width: 26px;
     flex-shrink: 0;
     border-radius: 4px 4px 0 0;
-    background: linear-gradient(to top, #6366f1, #818cf8);
+    background: linear-gradient(to top, #f97316, #fdba74);
     transition: height 0.4s cubic-bezier(.22,.68,0,1.2);
 }
 .c-tip {
@@ -1508,13 +1587,13 @@ textarea {
     text-decoration: none;
     padding: 2px 8px;
     border-radius: 10px;
-    background: rgba(99, 102, 241, 0.12);
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    background: rgba(249, 115, 22, 0.12);
+    border: 1px solid rgba(249, 115, 22, 0.3);
     white-space: nowrap;
     transition: background 0.15s;
 }
 .diary-log-jump:hover {
-    background: rgba(99, 102, 241, 0.25);
+    background: rgba(249, 115, 22, 0.25);
 }
 
 .diary-log-preview {
@@ -1619,17 +1698,17 @@ textarea {
     gap: 0.85rem;
     padding: 0.9rem 1.25rem;
     margin-bottom: 1.25rem;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.15));
-    border: 1px solid rgba(99, 102, 241, 0.35);
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.15), rgba(251, 146, 60, 0.15));
+    border: 1px solid rgba(249, 115, 22, 0.35);
     border-left: 4px solid var(--primary-color);
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: all 0.15s;
 }
 .weekly-goal-banner:hover {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.25));
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.25), rgba(251, 146, 60, 0.25));
     transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25);
+    box-shadow: 0 4px 16px rgba(249, 115, 22, 0.25);
 }
 .wgb-icon { font-size: 1.6rem; flex-shrink: 0; }
 .wgb-text { flex: 1; min-width: 0; }
@@ -1751,8 +1830,8 @@ textarea {
     right: 8px;
     top: 50%;
     transform: translateY(-50%);
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    background: rgba(249, 115, 22, 0.15);
+    border: 1px solid rgba(249, 115, 22, 0.3);
     color: var(--primary-color);
     width: 36px;
     height: 36px;
@@ -1764,7 +1843,7 @@ textarea {
     justify-content: center;
     transition: all 0.15s;
 }
-.voice-btn:hover { background: rgba(99, 102, 241, 0.25); }
+.voice-btn:hover { background: rgba(249, 115, 22, 0.25); }
 .voice-btn.recording {
     background: var(--danger-color);
     color: white;
@@ -1788,12 +1867,12 @@ textarea {
     margin-left: 0.5rem;
     transition: all 0.15s;
 }
-.ai-mini-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+.ai-mini-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4); }
 
 /* AI plan output */
 .ai-plan-output {
-    background: rgba(99, 102, 241, 0.08);
-    border: 1px solid rgba(99, 102, 241, 0.25);
+    background: rgba(249, 115, 22, 0.08);
+    border: 1px solid rgba(249, 115, 22, 0.25);
     border-radius: var(--radius-md);
     padding: 0.85rem 1rem;
     margin-top: 0.5rem;
@@ -1834,7 +1913,7 @@ textarea {
     transition: all 0.15s;
 }
 .template-btn:hover {
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(249, 115, 22, 0.15);
     border-color: var(--primary-color);
 }
 .template-btn.empty { opacity: 0.4; }
@@ -1935,8 +2014,8 @@ textarea {
     align-items: center;
     gap: 0.4rem;
     padding: 6px 12px;
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.35);
+    background: rgba(249, 115, 22, 0.15);
+    border: 1px solid rgba(249, 115, 22, 0.35);
     border-radius: 16px;
     font-size: 0.85rem;
     color: var(--text-primary);
@@ -1945,7 +2024,7 @@ textarea {
     transition: all 0.15s;
 }
 .unscheduled-task-chip:hover {
-    background: rgba(99, 102, 241, 0.25);
+    background: rgba(249, 115, 22, 0.25);
     transform: translateY(-1px);
 }
 .unscheduled-task-chip:active { cursor: grabbing; }
@@ -1975,14 +2054,14 @@ textarea {
 .schedule-block .resize-handle:hover { background: rgba(255,255,255,0.2); }
 
 .weekly-timeline.drop-target {
-    background: rgba(99, 102, 241, 0.1);
+    background: rgba(249, 115, 22, 0.1);
 }
 .drop-indicator {
     position: absolute;
     left: 0;
     right: 0;
     height: 60px;
-    background: rgba(99, 102, 241, 0.25);
+    background: rgba(249, 115, 22, 0.25);
     border: 2px dashed var(--primary-color);
     border-radius: 4px;
     pointer-events: none;
@@ -2009,7 +2088,7 @@ textarea {
 }
 .mood-btn:hover { transform: scale(1.1); }
 .mood-btn.selected {
-    background: rgba(99, 102, 241, 0.2);
+    background: rgba(249, 115, 22, 0.2);
     border-color: var(--primary-color);
     box-shadow: 0 0 20px var(--primary-glow);
 }
@@ -2204,7 +2283,7 @@ textarea {
     align-items: center;
     gap: 0.75rem;
     padding: 0.75rem 1rem;
-    background: rgba(99, 102, 241, 0.08);
+    background: rgba(249, 115, 22, 0.08);
     border-left: 3px solid var(--primary-color);
     border-radius: 6px;
     margin-bottom: 0.5rem;
@@ -2265,7 +2344,7 @@ body.mobile-layout .water-cup { min-width: 38px; font-size: 1.2rem; }
     font-size: 1.6rem;
     border: none;
     cursor: pointer;
-    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45);
+    box-shadow: 0 6px 20px rgba(249, 115, 22, 0.45);
     z-index: 1000;
     align-items: center;
     justify-content: center;
@@ -2310,7 +2389,7 @@ body.mobile-layout .mobile-quick-fab {
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(99, 102, 241, 0.3);
+    border: 2px solid rgba(249, 115, 22, 0.3);
     border-top-color: var(--primary-color);
     border-radius: 50%;
     animation: ai-spin 0.8s linear infinite;
@@ -2334,13 +2413,13 @@ body.mobile-layout .mobile-quick-fab {
     text-decoration: none;
     padding: 2px 8px;
     border-radius: 10px;
-    background: rgba(99, 102, 241, 0.12);
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    background: rgba(249, 115, 22, 0.12);
+    border: 1px solid rgba(249, 115, 22, 0.3);
     white-space: nowrap;
     transition: background 0.15s;
 }
 .diary-log-jump:hover {
-    background: rgba(99, 102, 241, 0.25);
+    background: rgba(249, 115, 22, 0.25);
 }
 
 /* Weekly goal banner (dashboard top) */
@@ -2350,17 +2429,17 @@ body.mobile-layout .mobile-quick-fab {
     gap: 0.85rem;
     padding: 0.9rem 1.25rem;
     margin-bottom: 1.25rem;
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.15));
-    border: 1px solid rgba(99, 102, 241, 0.35);
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.15), rgba(251, 146, 60, 0.15));
+    border: 1px solid rgba(249, 115, 22, 0.35);
     border-left: 4px solid var(--primary-color);
     border-radius: var(--radius-md);
     cursor: pointer;
     transition: all 0.15s;
 }
 .weekly-goal-banner:hover {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(168, 85, 247, 0.25));
+    background: linear-gradient(135deg, rgba(249, 115, 22, 0.25), rgba(251, 146, 60, 0.25));
     transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.25);
+    box-shadow: 0 4px 16px rgba(249, 115, 22, 0.25);
 }
 .wgb-icon { font-size: 1.6rem; flex-shrink: 0; }
 .wgb-text { flex: 1; min-width: 0; }
@@ -2454,7 +2533,7 @@ body.mobile-layout .mobile-quick-fab {
     align-items: center;
     gap: 12px;
     padding: 10px 14px;
-    background: rgba(99, 102, 241, 0.08);
+    background: rgba(249, 115, 22, 0.08);
     border-radius: var(--radius-sm);
     margin-bottom: 12px;
     border-left: 3px solid var(--primary-color);
@@ -2553,8 +2632,8 @@ body.mobile-layout .mobile-quick-fab {
     border-bottom-color: var(--primary-color);
 }
 .thermal-touch-btn {
-    background: rgba(99, 102, 241, 0.15);
-    border: 1px solid rgba(99, 102, 241, 0.3);
+    background: rgba(249, 115, 22, 0.15);
+    border: 1px solid rgba(249, 115, 22, 0.3);
     color: var(--primary-color);
     border-radius: var(--radius-sm);
     padding: 4px 8px;
@@ -2564,7 +2643,7 @@ body.mobile-layout .mobile-quick-fab {
     font-family: inherit;
 }
 .thermal-touch-btn:hover {
-    background: rgba(99, 102, 241, 0.25);
+    background: rgba(249, 115, 22, 0.25);
 }
 .thermal-touch-btn.touched {
     background: rgba(16, 185, 129, 0.2);
@@ -2641,7 +2720,7 @@ body.mobile-layout .mobile-quick-fab {
     box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
 }
 .thermal-bar-col.today .thermal-bar {
-    border: 1px solid rgba(99, 102, 241, 0.5);
+    border: 1px solid rgba(249, 115, 22, 0.5);
 }
 .thermal-bar-label {
     font-size: 0.65rem;
@@ -2662,7 +2741,7 @@ body.mobile-layout .mobile-quick-fab {
     list-style: none;
 }
 .task-overflow-toggle:hover {
-    background: rgba(99, 102, 241, 0.1);
+    background: rgba(249, 115, 22, 0.1);
 }
 .mobile-layout .thermal-blocks {
     grid-template-columns: 1fr;

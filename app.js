@@ -360,7 +360,7 @@ function createConfetti() {
     const wrapper = document.getElementById('confetti-wrapper');
     if (!wrapper) return;
     wrapper.innerHTML = '';
-    const colors = ['#f8fafc', '#6366f1', '#10b981', '#f59e0b', '#ef4444'];
+    const colors = ['#f8fafc', '#f97316', '#10b981', '#f59e0b', '#ef4444'];
     
     for (let i = 0; i < 40; i++) {
         const piece = document.createElement('div');
@@ -889,11 +889,48 @@ function removeAdditionalCalendar(index) {
 }
 
 // --- Event Listeners ---
+function setupMobileMoreMenu() {
+    const moreBtn = document.getElementById('mobile-more-btn');
+    const moreMenu = document.getElementById('mobile-more-menu');
+    const moreOverlay = document.getElementById('mobile-more-overlay');
+    const moreList = document.getElementById('mobile-more-list');
+    if (!moreBtn || !moreMenu) return;
+
+    const hiddenViews = [
+        { view: 'history', label: '履歴', icon: '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>' },
+        { view: 'stats', label: '統計', icon: '<rect x="18" y="3" width="4" height="18"></rect><rect x="10" y="8" width="4" height="13"></rect><rect x="2" y="13" width="4" height="8"></rect>' },
+        { view: 'goals', label: 'ゴール', icon: '<circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle>' },
+        { view: 'principles', label: '目標', icon: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>' },
+        { view: 'review', label: 'レビュー', icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>' },
+        { view: 'settings', label: '設定', icon: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>' },
+    ];
+
+    moreList.innerHTML = hiddenViews.map(v =>
+        `<li data-view="${v.view}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${v.icon}</svg>${v.label}</li>`
+    ).join('');
+
+    function closeMenu() { moreMenu.style.display = 'none'; }
+
+    moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        moreMenu.style.display = moreMenu.style.display === 'none' ? 'block' : 'none';
+    });
+    moreOverlay.addEventListener('click', closeMenu);
+    moreList.querySelectorAll('li').forEach(li => {
+        li.addEventListener('click', () => {
+            closeMenu();
+            switchView(li.dataset.view);
+        });
+    });
+}
+
 function setupEventListeners() {
     // Navigation
     navLinks.forEach(link => {
         link.addEventListener('click', () => switchView(link.dataset.view));
     });
+
+    setupMobileMoreMenu();
 
     // Adding Task
     // Set date picker default to today
@@ -2431,7 +2468,7 @@ function renderExpenseChart() {
 
     const barsHtml = data.map(d => {
         const barH = Math.round((d.amount / maxVal) * 80);
-        const barColor = d.amount > budget ? 'var(--danger-color)' : d.amount > budget * 0.85 ? '#f59e0b' : 'linear-gradient(to top, #6366f1, #818cf8)';
+        const barColor = d.amount > budget ? 'var(--danger-color)' : d.amount > budget * 0.85 ? '#f59e0b' : 'linear-gradient(to top, #f97316, #fdba74)';
         return `<div class="cbc${d.isToday ? ' cbc-today' : ''}">
             <span class="c-tip">¥${d.amount.toLocaleString()}</span>
             <div class="c-bar" style="height:${barH}px; background:${barColor};"></div>
