@@ -274,3 +274,12 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
     .routine-list .r-name { flex-basis: calc(100% - 140px); }
     .r-status { min-width: 0; flex: 1; justify-content: flex-start; padding-left: 52px; }
 }
+
+/* ── Google 連携の状態 ─────────────────── */
+.srcs { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; }
+.src { font-size: 0.72rem; border-radius: 5px; padding: 1px 7px; border: 1px solid var(--border); }
+.src.ok { color: var(--success); border-color: rgba(34, 197, 94, 0.4); }
+.src.bad { color: var(--danger); border-color: rgba(239, 68, 68, 0.5); }
+.problems { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.problem { padding: 10px 12px; border-radius: var(--r-md); border: 1px solid rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.06); font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.problem a { color: #fca5a5; }

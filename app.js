@@ -404,7 +404,13 @@
     } catch (e) { /* ignore */ }
     const tokenValid = () => !!(token && token.expires_at > Date.now() + 60000);
 
-    function connect() {
+    const TASKS_SCOPE = 'https://www.googleapis.com/auth/tasks.readonly';
+    const CAL_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+    const CAL_WRITE_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
+    // 許可された権限（ログイン画面でチェックを外すと、その権限だけ付かない）
+    const hasScope = sc => !token || !token.scope || token.scope.split(' ').includes(sc);
+
+    function connect(prompt = '') {
         return new Promise((resolve, reject) => {
             if (!window.google || !google.accounts || !google.accounts.oauth2) {
                 reject(new Error('Googleのログイン用スクリプトを読み込めませんでした。通信状態を確認してください。'));
@@ -415,13 +421,14 @@
                 scope: SCOPE,
                 callback: resp => {
                     if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
-                    token = { access_token: resp.access_token, expires_at: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
+                    token = { access_token: resp.access_token, scope: resp.scope || '',
+                        expires_at: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
                     try { localStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch (e) { /* ignore */ }
                     resolve();
                 },
                 error_callback: err => reject(new Error((err && err.message) || 'ログインがキャンセルされました'))
             });
-            client.requestAccessToken({ prompt: '' });
+            client.requestAccessToken({ prompt });
         });
     }
 
@@ -445,9 +452,16 @@
             throw new Error('NO_TOKEN');
         }
         if (!res.ok) {
-            let msg = String(res.status);
-            try { const j = await res.json(); msg += ' ' + ((j.error && j.error.message) || ''); } catch (e) { /* ignore */ }
-            throw new Error(msg);
+            let msg = '', reason = '';
+            try {
+                const j = await res.json();
+                msg = (j.error && j.error.message) || '';
+                const det = (j.error && j.error.details) || [];
+                reason = (det.find(x => x.reason) || {}).reason || ((j.error && j.error.errors && j.error.errors[0]) || {}).reason || (j.error && j.error.status) || '';
+            } catch (e) { /* ignore */ }
+            const err = new Error(`${res.status} ${msg}`.trim());
+            err.status = res.status; err.reason = reason; err.apiMessage = msg;
+            throw err;
         }
         return res.status === 204 ? null : res.json();
     }
@@ -598,26 +612,49 @@
         return n;
     }
 
+    // Google の API エラーを、利用者がとるべき行動ごとに分ける
+    function classifyGoogleError(e, kind) {
+        const text = `${e.reason || ''} ${e.apiMessage || e.message || ''}`;
+        if (/SERVICE_DISABLED|accessNotConfigured|has not been used|is disabled/i.test(text)) return { kind, type: 'api-disabled' };
+        if (e.status === 403 && /SCOPE_INSUFFICIENT|insufficient(Permissions)?|insufficient authentication scopes/i.test(text)) return { kind, type: 'scope' };
+        if (e.type === 'scope') return { kind, type: 'scope' };
+        return { kind, type: 'other', message: e.message };
+    }
+    function scopeError() { const e = new Error('scope'); e.type = 'scope'; return e; }
+
     let busy = false, syncError = '';
+    let gStatus = { calendar: null, tasks: null, push: null }; // null=未実行 / 'ok' / { type, ... }
     async function syncAll({ interactive = false } = {}) {
         if (busy) return;
         busy = true; syncError = ''; renderSchedule();
         try {
             if (!tokenValid()) {
                 if (!interactive) return;
-                await connect();
+                await connect(typeof interactive === 'string' ? interactive : '');
             }
             const g = state.settings.gsync;
             if (!g.since) g.since = today();
-            await pullCalendarEvents();
-            try { await pullGoogleTasks(); }
-            catch (e) {
-                if (e.message === 'NO_TOKEN') throw e;
-                console.warn('[tasks]', e);
-                syncError = 'Google ToDo を読めませんでした（Google Tasks API が有効か確認してください）';
+            gStatus = { calendar: null, tasks: null, push: null };
+            // それぞれ独立に実行し、1つ失敗しても他は続ける
+            const step = async (kind, scope, fn) => {
+                try {
+                    if (!hasScope(scope)) throw scopeError();
+                    await fn();
+                    gStatus[kind] = 'ok';
+                } catch (e) {
+                    if (e.message === 'NO_TOKEN') throw e;
+                    console.warn('[google]', kind, e);
+                    gStatus[kind] = classifyGoogleError(e, kind);
+                }
+            };
+            await step('calendar', CAL_READ_SCOPE, pullCalendarEvents);
+            await step('tasks', TASKS_SCOPE, pullGoogleTasks);
+            if (pendingRecords().length) {
+                await step('push', CAL_WRITE_SCOPE, async () => {
+                    const pushed = await pushRecords();
+                    if (pushed) toast(`実績 ${pushed} 件を「${REC_CAL_NAME}」に登録しました`);
+                });
             }
-            const pushed = await pushRecords();
-            if (pushed) toast(`実績 ${pushed} 件を「${REC_CAL_NAME}」に登録しました`);
             g.lastSyncAt = Date.now();
             save();
         } catch (e) {
@@ -779,11 +816,11 @@
         if (btn) {
             const map = {
                 off: ['', ''],
-                signedout: ['☁ 未ログイン', 'warn'],
-                syncing: ['☁ 同期中…', ''],
-                pending: [navigator.onLine ? '☁ 同期待ち' : '☁ オフライン', 'warn'],
-                synced: ['☁ 同期済み', 'ok'],
-                error: ['☁ 同期エラー', 'bad']
+                signedout: ['☁ 端末間同期：未ログイン', 'warn'],
+                syncing: ['☁ 端末間同期：送信中…', ''],
+                pending: [navigator.onLine ? '☁ 端末間同期：送信待ち' : '☁ 端末間同期：オフライン', 'warn'],
+                synced: ['☁ 端末間同期 ✓', 'ok'],
+                error: ['☁ 端末間同期：エラー', 'bad']
             };
             const [label, cls] = map[cloudState] || ['', ''];
             btn.textContent = label;
@@ -868,9 +905,31 @@
         }
 
         const connected = tokenValid();
-        const status = busy ? '同期中…'
-            : connected ? (g.lastSyncAt ? `最終同期 ${hm(new Date(g.lastSyncAt))}` : '接続済み')
-            : (g.lastSyncAt ? '再接続が必要です' : '未接続');
+        const status = busy ? '読み込み中…'
+            : connected ? (g.lastSyncAt ? `Google 最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google 接続済み')
+            : (g.lastSyncAt ? 'Google 再接続が必要' : 'Google 未接続');
+
+        // カレンダー／ToDo／実績の登録 それぞれの結果
+        const label = { calendar: 'カレンダー', tasks: 'Google ToDo', push: '実績の登録' };
+        const mark = k => gStatus[k] === 'ok' ? `<span class="src ok">${label[k]} ✓</span>`
+            : gStatus[k] ? `<span class="src bad">${label[k]} ✕</span>` : '';
+        const marks = connected && !busy ? ['calendar', 'tasks', 'push'].map(mark).join('') : '';
+        const projectNo = (state.settings.clientId || '').split('-')[0];
+        const apiName = { calendar: 'calendar-json.googleapis.com', tasks: 'tasks.googleapis.com', push: 'calendar-json.googleapis.com' };
+        const apiLabel = { calendar: 'Google Calendar API', tasks: 'Google Tasks API', push: 'Google Calendar API' };
+        const problems = ['calendar', 'tasks', 'push'].filter(k => gStatus[k] && gStatus[k] !== 'ok').map(k => {
+            const st = gStatus[k];
+            if (st.type === 'scope') {
+                return `<div class="problem"><p><b>${label[k]}</b>：ログイン時にこの権限が許可されていません（許可画面でチェックが外れていた可能性があります）。</p>
+                    <button type="button" class="btn secondary small" data-act="reconsent">権限を許可し直す</button></div>`;
+            }
+            if (st.type === 'api-disabled') {
+                const url = `https://console.cloud.google.com/apis/library/${apiName[k]}${/^\d+$/.test(projectNo) ? '?project=' + projectNo : ''}`;
+                return `<div class="problem"><p><b>${label[k]}</b>：Google Cloud のプロジェクトで ${apiLabel[k]} が有効になっていません。</p>
+                    <p><a href="${url}" target="_blank" rel="noopener">${apiLabel[k]} を有効にする ↗</a>（有効にしてから数分待って「Googleと同期」）</p></div>`;
+            }
+            return `<div class="problem"><p><b>${label[k]}</b>：読み込めませんでした（${esc(st.message || '不明なエラー')}）</p></div>`;
+        }).join('');
 
         $('schedule-panel').innerHTML = `
             <div class="panel-head">
@@ -880,7 +939,9 @@
                     <button type="button" class="btn secondary small" data-act="sync" ${busy ? 'disabled' : ''}>⟳ Googleと同期</button>
                 </div>
             </div>
+            ${marks ? `<div class="srcs">${marks}</div>` : ''}
             ${body}${rec}
+            ${problems ? `<div class="problems">${problems}</div>` : ''}
             ${syncError ? `<p class="error">${esc(syncError)}</p>` : ''}`;
     }
 
@@ -1035,6 +1096,7 @@
                 case 'finish': finishTimer(); break;
                 case 'carry': moveOverdueToToday(); break;
                 case 'sync': syncAll({ interactive: true }); break;
+                case 'reconsent': token = null; syncAll({ interactive: 'consent' }); break;
                 case 'cloud-login': cloudLogin(); break;
                 case 'view': showView(el.dataset.view); break;
                 case 'r-skip': setRoutineSkip(id, true); break;
