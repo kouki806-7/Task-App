@@ -1,25 +1,19 @@
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v101';
 const STATIC_CACHE = `daily-flow-static-${CACHE_VERSION}`;
 const CDN_CACHE = `daily-flow-cdn-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
     './',
     './index.html',
-    './app.js?v=69',
-    './style.css?v=26',
+    './app.js?v=101',
+    './style.css?v=101',
     './manifest.json',
-    './icon.jpg',
     './icon-192.png',
     './icon-512.png',
 ];
 
-const CDN_HOSTS = [
-    'www.gstatic.com',
-    'fonts.googleapis.com',
-    'fonts.gstatic.com',
-    'apis.google.com',
-    'accounts.google.com',
-];
+// Google API への通信（予定・ToDo・ログイン）はキャッシュしない
+const CDN_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'www.gstatic.com'];
 
 self.addEventListener('install', event => {
     event.waitUntil(
@@ -33,9 +27,7 @@ self.addEventListener('activate', event => {
     event.waitUntil(
         caches.keys()
             .then(keys => Promise.all(
-                keys
-                    .filter(k => k !== STATIC_CACHE && k !== CDN_CACHE)
-                    .map(k => caches.delete(k))
+                keys.filter(k => k !== STATIC_CACHE && k !== CDN_CACHE).map(k => caches.delete(k))
             ))
             .then(() => self.clients.claim())
     );
@@ -44,38 +36,22 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
     const { request } = event;
     const url = new URL(request.url);
-
     if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 
-    if (url.origin === self.location.origin) {
-        event.respondWith(
-            caches.open(STATIC_CACHE).then(cache =>
-                cache.match(request).then(cached => {
-                    const networkFetch = fetch(request).then(response => {
-                        if (response.ok) cache.put(request, response.clone());
-                        return response;
-                    }).catch(() => null);
-                    return cached || networkFetch;
-                })
-            )
-        );
-        return;
-    }
+    const sameOrigin = url.origin === self.location.origin;
+    const cdn = CDN_HOSTS.some(h => url.hostname.endsWith(h));
+    if (!sameOrigin && !cdn) return;
 
-    if (CDN_HOSTS.some(h => url.hostname.endsWith(h))) {
-        event.respondWith(
-            caches.open(CDN_CACHE).then(cache =>
-                cache.match(request).then(cached => {
-                    const networkFetch = fetch(request).then(response => {
-                        if (response.status === 0 || response.ok) {
-                            cache.put(request, response.clone());
-                        }
-                        return response;
-                    }).catch(() => null);
-                    return cached || networkFetch;
+    // 新しい版を優先し、オフライン時だけキャッシュを使う
+    const cacheName = sameOrigin ? STATIC_CACHE : CDN_CACHE;
+    event.respondWith(
+        caches.open(cacheName).then(cache =>
+            fetch(request)
+                .then(response => {
+                    if (response.ok || response.status === 0) cache.put(request, response.clone());
+                    return response;
                 })
-            )
-        );
-        return;
-    }
+                .catch(() => cache.match(request))
+        )
+    );
 });
