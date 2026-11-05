@@ -152,34 +152,112 @@
         state.tasks = state.tasks.filter(t => !removed.includes(t.id));
     }
 
-    function addRoutine(text, duration) {
-        text = text.trim();
-        if (!text) return;
-        state.routines.push({ id: genId(), text, duration: duration || 0, createdAt: Date.now() });
-        ensureRoutineTasksToday();
-        save(); render(); renderRoutines();
+    // ── 毎日のタスクの一括管理 ─────────────────────────────
+    // 画面を開いた時点の登録を下書き（rDraft）にコピーし、追加・編集・削除・並べ替えは下書きに対して行う。
+    // 「変更を保存」でまとめて反映する。
+    let rDraft = null;        // [{ id, text, duration, createdAt, skipDate, isNew }]
+    let rBaseIds = [];        // 開いた時点にあった登録のID（他の端末での追加分を消さないために使う）
+    let rSelected = new Set();
+
+    function startRoutineEdit() {
+        rDraft = state.routines.map(r => ({ ...r }));
+        rBaseIds = state.routines.map(r => r.id);
+        rSelected = new Set();
     }
 
-    function updateRoutine(id, fields) {
+    function routineChanges() {
+        if (!rDraft) return { added: 0, edited: 0, removed: 0, reordered: false, total: 0 };
+        const cur = new Map(state.routines.map(r => [r.id, r]));
+        const added = rDraft.filter(d => d.isNew).length;
+        const removed = rBaseIds.filter(id => cur.has(id) && !rDraft.some(d => d.id === id)).length;
+        const edited = rDraft.filter(d => {
+            const o = !d.isNew && cur.get(d.id);
+            return o && (o.text !== d.text.trim() || (o.duration || 0) !== (d.duration || 0));
+        }).length;
+        const keptOrder = rDraft.filter(d => !d.isNew && cur.has(d.id)).map(d => d.id);
+        const origOrder = state.routines.map(r => r.id).filter(id => keptOrder.includes(id));
+        const reordered = keptOrder.join() !== origOrder.join();
+        return { added, edited, removed, reordered, total: added + edited + removed + (reordered ? 1 : 0) };
+    }
+
+    function parseRoutineLine(line) {
+        const p = parseInput(line);
+        return { text: p.text.trim(), duration: p.duration || 0 };
+    }
+
+    // 複数行をまとめて下書きに追加（1行1件。「単語帳 30分」のように時間も書ける）
+    function draftAddLines(text) {
+        let added = 0, dup = 0;
+        text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).forEach(line => {
+            const { text: name, duration } = parseRoutineLine(line);
+            if (!name) return;
+            if (rDraft.some(d => d.text.trim() === name)) { dup++; return; }
+            rDraft.push({ id: genId(), text: name, duration, isNew: true });
+            added++;
+        });
+        return { added, dup };
+    }
+
+    function saveRoutineEdits() {
+        if (!rDraft) return;
+        if (rDraft.some(d => !d.isNew && !d.text.trim())) { toast('名前が空の項目があります'); return false; }
+        const ch = routineChanges();
+        const cur = new Map(state.routines.map(r => [r.id, r]));
+        const now = Date.now();
+        // 削除: 開いた時点にあって下書きから消えたもの
+        const removedIds = rBaseIds.filter(id => cur.has(id) && !rDraft.some(d => d.id === id));
+        const del = state.settings.deletedRoutineIds;
+        removedIds.forEach(id => { if (!del.includes(id)) del.push(id); });
+        if (del.length > 500) del.splice(0, del.length - 500);
+        // 下書きの順に並べ、他の端末で編集中に追加された分は後ろに残す
+        const next = rDraft.filter(d => d.text.trim()).map(d => {
+            const o = cur.get(d.id);
+            return { id: d.id, text: d.text.trim(), duration: d.duration || 0,
+                createdAt: (o && o.createdAt) || d.createdAt || now, skipDate: (o ? o.skipDate : d.skipDate) || null };
+        });
+        state.routines.forEach(r => {
+            if (!rBaseIds.includes(r.id) && !next.some(n => n.id === r.id)) next.push(r);
+        });
+        state.routines = next;
+        // 今日のまだ終わっていない分に名前・時間の変更を反映
+        state.tasks.forEach(t => {
+            if (!t.isRoutine || t.completed || t.date !== today()) return;
+            const r = state.routines.find(x => x.id === t.routineId);
+            if (r) { t.text = r.text; t.duration = r.duration || 0; }
+        });
+        cleanRoutines();
+        ensureRoutineTasksToday();
+        // 今日のタスクの並びも登録順に合わせる
+        const order = new Map(state.routines.map((r, i) => [r.id, i]));
+        const rt = state.tasks.filter(t => t.isRoutine && t.date === today()).sort((a, b) => order.get(a.routineId) - order.get(b.routineId));
+        let k = 0;
+        state.tasks = state.tasks.map(t => (t.isRoutine && t.date === today()) ? rt[k++] : t);
+        save(); render();
+        startRoutineEdit(); renderRoutines();
+        const parts = [];
+        if (ch.added) parts.push(`追加 ${ch.added}`);
+        if (ch.edited) parts.push(`変更 ${ch.edited}`);
+        if (ch.removed) parts.push(`削除 ${ch.removed}`);
+        if (ch.reordered) parts.push('並べ替え');
+        toast(parts.length ? `保存しました（${parts.join('・')}）` : '変更はありません');
+        return true;
+    }
+
+    function setRoutineSkip(id, skip) {
         const r = state.routines.find(x => x.id === id);
         if (!r) return;
-        Object.assign(r, fields);
-        // 今日のまだ終わっていない分にも反映
-        state.tasks.forEach(t => {
-            if (t.isRoutine && t.routineId === id && t.date === today() && !t.completed) {
-                t.text = r.text; t.duration = r.duration || 0;
+        r.skipDate = skip ? today() : null;
+        if (skip) {
+            const t = state.tasks.find(x => x.isRoutine && x.routineId === id && x.date === today() && !x.completed);
+            if (t) {
+                if (state.timer.taskId === t.id) resetTimer();
+                state.tasks = state.tasks.filter(x => x.id !== t.id);
             }
-        });
-        save(); render();
-    }
-
-    function deleteRoutine(id) {
-        const r = state.routines.find(x => x.id === id);
-        if (!r || !confirm(`毎日のタスク「${r.text}」を削除しますか？（今日の分も消えます）`)) return;
-        const del = state.settings.deletedRoutineIds;
-        if (!del.includes(id)) del.push(id);
-        if (del.length > 500) del.splice(0, del.length - 500);
-        cleanRoutines();
+        } else {
+            ensureRoutineTasksToday();
+        }
+        const dr = rDraft && rDraft.find(x => x.id === id);
+        if (dr) dr.skipDate = r.skipDate;
         save(); render(); renderRoutines();
     }
 
@@ -855,15 +933,76 @@
 
     function renderRoutines() {
         const list = $('routine-list');
-        if (!list) return;
+        if (!list || !rDraft) return;
         const d = today();
-        list.innerHTML = state.routines.length ? state.routines.map(r => `
-            <li data-id="${r.id}">
-                <input type="text" class="r-name" value="${esc(r.text)}" aria-label="タスク名">
-                <label class="r-min"><input type="number" class="r-dur" min="0" max="1440" value="${r.duration || ''}" placeholder="—" aria-label="時間（分）">分</label>
-                ${r.skipDate === d ? '<button type="button" class="btn secondary small" data-act="routine-unskip" data-id="' + r.id + '">今日も出す</button>' : ''}
-                <button type="button" class="del" data-act="routine-delete" data-id="${r.id}" aria-label="削除">×</button>
-            </li>`).join('') : '<li class="empty">まだ登録がありません</li>';
+        const cur = new Map(state.routines.map(r => [r.id, r]));
+        const doneToday = new Set(state.tasks.filter(t => t.isRoutine && t.date === d && t.completed).map(t => t.routineId));
+        $('routine-count').textContent = rDraft.length;
+        list.innerHTML = rDraft.length ? rDraft.map((r, i) => {
+            const status = routineStatusHtml(r, cur, doneToday, d);
+            return `
+            <li data-id="${r.id}" class="${rSelected.has(r.id) ? 'selected' : ''}">
+                <input type="checkbox" class="r-check" data-id="${r.id}" ${rSelected.has(r.id) ? 'checked' : ''} aria-label="選択">
+                <div class="r-move">
+                    <button type="button" data-act="r-up" data-id="${r.id}" ${i === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
+                    <button type="button" data-act="r-down" data-id="${r.id}" ${i === rDraft.length - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
+                </div>
+                <input type="text" class="r-name" data-id="${r.id}" value="${esc(r.text)}" aria-label="タスク名">
+                <label class="r-min"><input type="number" class="r-dur" data-id="${r.id}" min="0" max="1440" value="${r.duration || ''}" placeholder="—" aria-label="時間（分）">分</label>
+                <div class="r-status">${status}</div>
+                <button type="button" class="del" data-act="r-remove" data-id="${r.id}" aria-label="削除">×</button>
+            </li>`;
+        }).join('') : '<li class="empty">まだ登録がありません。下の欄からまとめて追加できます。</li>';
+        renderRoutineBar();
+    }
+
+    function routineStatusHtml(r, cur, doneToday, d) {
+        const o = cur.get(r.id);
+        const changed = !r.isNew && o && (o.text !== r.text.trim() || (o.duration || 0) !== (r.duration || 0));
+        if (r.isNew) return '<span class="chip new">新規</span>';
+        if (changed) return '<span class="chip edited">変更</span>';
+        if (doneToday.has(r.id)) return '<span class="chip done">今日 完了</span>';
+        if (o && o.skipDate === d) return `<span class="chip">今日はお休み</span><button type="button" class="link-btn" data-act="r-unskip" data-id="${r.id}">今日も出す</button>`;
+        if (o) return `<button type="button" class="link-btn" data-act="r-skip" data-id="${r.id}">今日は休む</button>`;
+        return '';
+    }
+
+    // 1行の状態表示だけ更新（一覧全体を描き直さないので、入力中のフォーカスが外れない）
+    function updateRoutineRow(id) {
+        const li = document.querySelector(`#routine-list li[data-id="${id}"]`);
+        const r = rDraft && rDraft.find(x => x.id === id);
+        if (!li || !r) return;
+        const d = today();
+        const cur = new Map(state.routines.map(x => [x.id, x]));
+        const doneToday = new Set(state.tasks.filter(t => t.isRoutine && t.date === d && t.completed).map(t => t.routineId));
+        li.querySelector('.r-status').innerHTML = routineStatusHtml(r, cur, doneToday, d);
+    }
+
+    // 選択・保存まわりの表示だけ更新（入力中のフォーカスを奪わない）
+    function renderRoutineBar() {
+        if (!rDraft) return;
+        const ch = routineChanges();
+        const n = rSelected.size;
+        $('r-select-all').checked = rDraft.length > 0 && n === rDraft.length;
+        $('r-select-all').indeterminate = n > 0 && n < rDraft.length;
+        $('r-delete-selected').disabled = n === 0;
+        $('r-delete-selected').textContent = n ? `選択した ${n} 件を削除` : '選択して削除';
+        $('r-save-bar').classList.toggle('visible', ch.total > 0);
+        $('r-save-text').textContent = `未保存の変更があります（${[
+            ch.added && `追加 ${ch.added}`, ch.edited && `変更 ${ch.edited}`,
+            ch.removed && `削除 ${ch.removed}`, ch.reordered && '並べ替え'].filter(Boolean).join('・')}）`;
+        document.querySelectorAll('#routine-list li[data-id]').forEach(li => li.classList.toggle('selected', rSelected.has(li.dataset.id)));
+    }
+
+    // ── 画面の切り替え ─────────────────────────────────────
+    function showView(name) {
+        if (name === 'today' && rDraft && routineChanges().total > 0
+            && !confirm('毎日のタスクに保存していない変更があります。破棄して戻りますか？')) return;
+        if (name === 'routines') { startRoutineEdit(); renderRoutines(); }
+        else rDraft = null;
+        document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== 'view-' + name);
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === name));
+        window.scrollTo(0, 0);
     }
 
     function renderTasks() {
@@ -897,10 +1036,17 @@
                 case 'carry': moveOverdueToToday(); break;
                 case 'sync': syncAll({ interactive: true }); break;
                 case 'cloud-login': cloudLogin(); break;
-                case 'routine-delete': deleteRoutine(id); break;
-                case 'routine-unskip': updateRoutine(id, { skipDate: null }); ensureRoutineTasksToday(); save(); render(); renderRoutines(); break;
-                case 'routines': renderRoutines(); $('routine-dialog').showModal(); break;
-                case 'close-routines': $('routine-dialog').close(); break;
+                case 'view': showView(el.dataset.view); break;
+                case 'r-skip': setRoutineSkip(id, true); break;
+                case 'r-unskip': setRoutineSkip(id, false); break;
+                case 'r-remove': rDraft = rDraft.filter(r => r.id !== id); rSelected.delete(id); renderRoutines(); break;
+                case 'r-up': case 'r-down': {
+                    const i = rDraft.findIndex(r => r.id === id), j = i + (el.dataset.act === 'r-up' ? -1 : 1);
+                    if (i >= 0 && j >= 0 && j < rDraft.length) { [rDraft[i], rDraft[j]] = [rDraft[j], rDraft[i]]; renderRoutines(); }
+                    break;
+                }
+                case 'r-save': saveRoutineEdits(); break;
+                case 'r-revert': startRoutineEdit(); renderRoutines(); toast('変更を取り消しました'); break;
                 case 'cloud-logout': cloudLogout(); break;
             }
         });
@@ -926,21 +1072,49 @@
             toggleTimer(task.id);
         });
 
-        // 毎日のタスク
-        $('routine-form').addEventListener('submit', e => {
-            e.preventDefault();
-            const name = $('routine-name');
-            if (!name.value.trim()) { name.focus(); return; }
-            addRoutine(name.value, parseInt($('routine-dur').value, 10) || 0);
-            name.value = ''; $('routine-dur').value = '';
-            name.focus();
+        // 毎日のタスク（一括管理）
+        const list = $('routine-list');
+        list.addEventListener('input', e => {
+            const id = e.target.dataset.id;
+            const r = rDraft && rDraft.find(x => x.id === id);
+            if (!r) return;
+            if (e.target.classList.contains('r-name')) r.text = e.target.value;
+            if (e.target.classList.contains('r-dur')) r.duration = parseInt(e.target.value, 10) || 0;
+            updateRoutineRow(id);
+            renderRoutineBar();
         });
-        $('routine-list').addEventListener('change', e => {
-            const li = e.target.closest('li[data-id]');
-            if (!li) return;
-            const text = li.querySelector('.r-name').value.trim();
-            if (!text) { renderRoutines(); return; }
-            updateRoutine(li.dataset.id, { text, duration: parseInt(li.querySelector('.r-dur').value, 10) || 0 });
+        list.addEventListener('change', e => {
+            if (e.target.classList.contains('r-check')) {
+                const id = e.target.dataset.id;
+                if (e.target.checked) rSelected.add(id); else rSelected.delete(id);
+                renderRoutineBar();
+            }
+        });
+        $('r-select-all').addEventListener('change', e => {
+            rSelected = e.target.checked ? new Set(rDraft.map(r => r.id)) : new Set();
+            renderRoutines();
+        });
+        $('r-delete-selected').addEventListener('click', () => {
+            if (!rSelected.size) return;
+            rDraft = rDraft.filter(r => !rSelected.has(r.id));
+            rSelected = new Set();
+            renderRoutines();
+            toast('削除は「変更を保存」で確定します');
+        });
+        $('routine-add-form').addEventListener('submit', e => {
+            e.preventDefault();
+            const ta = $('routine-add-text');
+            const { added, dup } = draftAddLines(ta.value);
+            if (!added && !dup) { ta.focus(); return; }
+            ta.value = '';
+            renderRoutines();
+            toast(`${added} 件を追加しました${dup ? `（同じ名前の ${dup} 件は省きました）` : ''}。「変更を保存」で確定します`);
+        });
+        $('routine-add-text').addEventListener('keydown', e => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('routine-add-form').requestSubmit(); }
+        });
+        window.addEventListener('beforeunload', e => {
+            if (rDraft && routineChanges().total > 0) { e.preventDefault(); e.returnValue = ''; }
         });
 
         // 設定
@@ -1061,5 +1235,5 @@
     if (tokenValid()) setTimeout(() => syncAll(), 500);
 
     // テスト用
-    window.__df = { state: () => state, addRoutine, deleteRoutine, cleanRoutines, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
+    window.__df = { state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
 })();
