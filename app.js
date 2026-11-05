@@ -2,7 +2,8 @@
  * Daily Flow (v3 — 最小構成)
  *
  * できること:
- *   - 今日のタスク: 1行で追加（「60分」「明日」「毎日」を書ける）、完了、削除、未完了は翌日へ繰り越し
+ *   - 今日のタスク: 1行で追加（「60分」「明日」を書ける）、完了、削除、未完了は翌日へ繰り越し
+ *   - 毎日のタスク: 専用の画面で登録・編集・削除。毎朝5時に今日のタスクへ自動で入る
  *   - タイマー: 各タスクの ▶ で計測、一時停止、完了で実績を記録
  *   - 予定にない作業: 名前を書いて「今すぐ計測」
  *   - Google ToDo: 未完了タスクを取り込む（読むだけ）
@@ -93,51 +94,111 @@
         if (!t.accumulatedSeconds) t.accumulatedSeconds = 0;
         if (!t.isRunning) { t.isRunning = false; t.startTime = null; }
         state.tasks.forEach(task => { if (!task.date) task.date = today(); });
-        rollover();
+        if (!Array.isArray(state.settings.deletedRoutineIds)) state.settings.deletedRoutineIds = [];
+        // 一度だけ: 以前の版で登録された毎日のタスクを片付ける（新しい登録画面で作り直す）
+        let migrated = false;
+        if (!state.settings.routineResetAt) {
+            state.settings.routineResetAt = Date.now();
+            migrated = true;
+        }
+        cleanRoutines();
+        if (!rollover() && migrated) save(true);
     }
 
-    function save() {
+    // system=true は日付の切り替えなど自動の処理。利用者の操作ではないので「未送信の変更」扱いにしない
+    function save(system = false) {
+        // クラウドに送る前の変更があることを覚えておく（送る前に閉じても、次回は手元を優先する）
+        if (!system && state.settings && state.settings.firebaseConfig) state.cloudDirty = true;
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
         catch (e) { toast('保存に失敗しました: ' + e.message); }
         scheduleCloudSave();
     }
 
-    // 日付が変わったら: 完了済みを片付け、未完了は残し、毎日のタスクを作り直す
+    // 日付が変わったら: 完了済みを片付け、未完了は残し、毎日のタスクを今日の分だけ作る
     function rollover() {
         const d = today();
         if (state.lastDate === d) return false;
-        // 毎日のタスクは今日の分だけ残し、足りない分を作る（何度呼んでも重複しない）
-        const keep = state.tasks.filter(t => t.id === state.timer.taskId ||
+        state.tasks = state.tasks.filter(t => t.id === state.timer.taskId ||
             (t.isRoutine ? t.date === d : (!t.completed || t.date >= d)));
-        const routineTasks = state.routines
-            .filter(r => !keep.some(t => t.isRoutine && t.date === d && t.text === r.text))
-            .map(r => ({
-            id: genId(), text: r.text, duration: r.duration || 0, tag: r.tag || 'タスク',
-            date: d, completed: false, isRoutine: true
-        }));
-        state.tasks = [...keep, ...routineTasks];
+        ensureRoutineTasksToday();
         state.lastDate = d;
-        save();
+        save(true);
         return true;
+    }
+
+    // ── 毎日のタスク ───────────────────────────────────────
+    // 登録（state.routines）を元に、今日の分のタスクがなければ作る。何度呼んでも重複しない
+    function ensureRoutineTasksToday() {
+        const d = today();
+        state.routines.forEach(r => {
+            if (r.skipDate === d) return; // 今日はスキップ
+            if (state.tasks.some(t => t.isRoutine && t.routineId === r.id && t.date === d)) return;
+            state.tasks.push({ id: genId(), routineId: r.id, text: r.text, duration: r.duration || 0,
+                tag: 'タスク', date: d, completed: false, isRoutine: true });
+        });
+    }
+
+    // 古い登録（作り直す前のもの）と削除済みの登録を外し、対応する今日のタスクも外す
+    function cleanRoutines() {
+        const resetAt = state.settings.routineResetAt || 0;
+        const deleted = new Set(state.settings.deletedRoutineIds || []);
+        state.routines = state.routines.filter((r, i, arr) =>
+            r && r.createdAt && r.createdAt >= resetAt && !deleted.has(r.id) && arr.findIndex(x => x.id === r.id) === i);
+        const ids = new Set(state.routines.map(r => r.id));
+        const removed = state.tasks.filter(t => t.isRoutine && !ids.has(t.routineId)).map(t => t.id);
+        if (!removed.length) return;
+        if (removed.includes(state.timer.taskId)) resetTimer();
+        state.pausedTimers = state.pausedTimers.filter(p => !removed.includes(p.taskId));
+        state.tasks = state.tasks.filter(t => !removed.includes(t.id));
+    }
+
+    function addRoutine(text, duration) {
+        text = text.trim();
+        if (!text) return;
+        state.routines.push({ id: genId(), text, duration: duration || 0, createdAt: Date.now() });
+        ensureRoutineTasksToday();
+        save(); render(); renderRoutines();
+    }
+
+    function updateRoutine(id, fields) {
+        const r = state.routines.find(x => x.id === id);
+        if (!r) return;
+        Object.assign(r, fields);
+        // 今日のまだ終わっていない分にも反映
+        state.tasks.forEach(t => {
+            if (t.isRoutine && t.routineId === id && t.date === today() && !t.completed) {
+                t.text = r.text; t.duration = r.duration || 0;
+            }
+        });
+        save(); render();
+    }
+
+    function deleteRoutine(id) {
+        const r = state.routines.find(x => x.id === id);
+        if (!r || !confirm(`毎日のタスク「${r.text}」を削除しますか？（今日の分も消えます）`)) return;
+        const del = state.settings.deletedRoutineIds;
+        if (!del.includes(id)) del.push(id);
+        if (del.length > 500) del.splice(0, del.length - 500);
+        cleanRoutines();
+        save(); render(); renderRoutines();
     }
 
     // ════════════════════════════════════════════════════════
     // タスク
     // ════════════════════════════════════════════════════════
-    // 「レポート 60分 明日」→ { text, duration, date, routine }
+    // 「レポート 60分 明日」→ { text, duration, date }
     function parseInput(raw) {
         let text = ' ' + raw + ' ';
-        let duration = 0, date = today(), routine = false, m;
+        let duration = 0, date = today(), m;
         if ((m = text.match(/\s(\d+(?:\.\d+)?)\s*(時間|h)(?=\s)/i))) {
             duration = Math.round(parseFloat(m[1]) * 60); text = text.replace(m[0], ' ');
         } else if ((m = text.match(/\s(\d+)\s*(分|m|min)(?=\s)/i))) {
             duration = parseInt(m[1], 10); text = text.replace(m[0], ' ');
         }
-        if (/\s毎日(?=\s)/.test(text)) { routine = true; text = text.replace(/\s毎日(?=\s)/, ' '); }
-        else if (/\s明日(?=\s)/.test(text)) { date = addDays(today(), 1); text = text.replace(/\s明日(?=\s)/, ' '); }
+        if (/\s明日(?=\s)/.test(text)) { date = addDays(today(), 1); text = text.replace(/\s明日(?=\s)/, ' '); }
         else if (/\s今日(?=\s)/.test(text)) { text = text.replace(/\s今日(?=\s)/, ' '); }
         text = text.replace(/\s+/g, ' ').trim() || raw.trim();
-        return { text, duration, date, routine };
+        return { text, duration, date };
     }
 
     function addTask(raw, extra = {}) {
@@ -145,12 +206,9 @@
         if (!p.text) return null;
         const task = {
             id: genId(), text: p.text, duration: p.duration, tag: 'タスク',
-            date: p.routine ? today() : p.date, completed: false, isRoutine: p.routine, ...extra
+            date: p.date, completed: false, isRoutine: false, ...extra
         };
         state.tasks.push(task);
-        if (p.routine && !state.routines.some(r => r.text === p.text)) {
-            state.routines.push({ id: genId(), text: p.text, duration: p.duration, tag: 'タスク' });
-        }
         save();
         return task;
     }
@@ -176,8 +234,11 @@
     function deleteTask(id) {
         const task = state.tasks.find(t => t.id === id);
         if (!task) return;
-        if (task.isRoutine && !confirm(`「${task.text}」は毎日のタスクです。明日以降も出さないようにしますか？`)) return;
-        if (task.isRoutine) state.routines = state.routines.filter(r => r.text !== task.text);
+        if (task.isRoutine) {
+            // 毎日のタスクの × は「今日だけスキップ」。登録そのものは毎日のタスク画面で消す
+            const r = state.routines.find(x => x.id === task.routineId);
+            if (r) r.skipDate = task.date;
+        }
         if (task.gtaskId) setCompleted(task, true); // 同期で戻ってこないようにする
         if (state.timer.taskId === id) resetTimer();
         state.pausedTimers = state.pausedTimers.filter(p => p.taskId !== id);
@@ -555,6 +616,10 @@
             // Firestore は undefined を受け付けないので JSON を通して落とす
             CLOUD_KEYS.forEach(k => { if (state[k] !== undefined) data[k] = JSON.parse(JSON.stringify(state[k])); });
             await db.collection('users').doc(currentUser.uid).set(data, { merge: true });
+            if (!cloudSaveTimer) {
+                state.cloudDirty = false;
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+            }
             setCloudState(cloudSaveTimer ? 'pending' : 'synced');
         } catch (e) {
             console.error('[cloud] save', e);
@@ -576,24 +641,33 @@
             if (!snap.exists) { await saveToCloud(); return; } // 初回: 手元のデータを上げる
             const c = snap.data() || {};
             const d = today();
+            const localFirst = !!state.cloudDirty; // 未送信の変更があるときは手元を優先
 
-            // 実績・毎日のタスク: 両方を合わせる（同じIDはクラウド優先）
-            state.schedules = unionById(c.schedules || [], state.schedules);
-            state.routines = unionById(c.routines || [], state.routines)
-                .filter((r, i, arr) => arr.findIndex(x => x.text === r.text) === i);
-
-            // 設定: クラウドを基本に、Google ToDo の完了済みIDは両方を合わせる
+            // 設定: クラウドを基本に、Google ToDo の完了済みID・削除した毎日のタスクIDは両方を合わせる
             const localDone = state.settings.gsync.doneGtaskIds || [];
             const localEvents = state.settings.gsync.todayEvents;
-            state.settings = { ...state.settings, ...(c.settings || {}) };
+            const localDeleted = state.settings.deletedRoutineIds || [];
+            const localResetAt = state.settings.routineResetAt;
+            state.settings = localFirst ? { ...(c.settings || {}), ...state.settings } : { ...state.settings, ...(c.settings || {}) };
+            state.settings.deletedRoutineIds = Array.from(new Set([...(state.settings.deletedRoutineIds || []), ...localDeleted])).slice(-500);
+            // 片付けの基準時刻は早いほうに合わせる（他の端末で新しく登録した分を消さないため）
+            if (localResetAt && (!state.settings.routineResetAt || localResetAt < state.settings.routineResetAt)) {
+                state.settings.routineResetAt = localResetAt;
+            }
             if (!state.settings.gsync) state.settings.gsync = {};
             const g = state.settings.gsync;
+            if (!Array.isArray(g.doneGtaskIds)) g.doneGtaskIds = [];
             g.doneGtaskIds = Array.from(new Set([...(g.doneGtaskIds || []), ...localDone])).slice(-500);
             if (localEvents && (!g.todayEvents || localEvents.date >= g.todayEvents.date)) g.todayEvents = localEvents;
 
+            // 実績・毎日のタスク: 両方を合わせる（同じIDはクラウド優先）
+            const merge = (cloudArr, localArr) => localFirst ? unionById(localArr, cloudArr || []) : unionById(cloudArr || [], localArr);
+            state.schedules = merge(c.schedules, state.schedules);
+            state.routines = merge(c.routines, state.routines);
+
             // タスク: 同じIDはクラウド優先、手元にしかないもの（未送信の追加分）は残す
             const cloudDate = c.lastDate || '';
-            state.tasks = unionById(c.tasks || [], state.tasks)
+            state.tasks = merge(c.tasks, state.tasks)
                 .filter((t, i, arr) => !t.gtaskId || arr.findIndex(x => x.gtaskId === t.gtaskId) === i);
             if (cloudDate > state.lastDate) state.lastDate = cloudDate;
             // アプリで完了・削除した Google ToDo は外す
@@ -606,8 +680,13 @@
                 state.pausedTimers = c.pausedTimers || [];
             }
 
+            // 毎日のタスク: 同じ日に2台で作られた分は1つにまとめる
+            state.tasks = state.tasks.filter((t, i, arr) => !t.isRoutine ||
+                arr.findIndex(x => x.isRoutine && x.routineId === t.routineId && x.date === t.date) === i || t.id === state.timer.taskId);
+            cleanRoutines();
             if (cloudDate < d) state.lastDate = cloudDate; // 日付が古ければ繰り越し処理をやり直す
             rollover();
+            ensureRoutineTasksToday();
             try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
             render();
             await saveToCloud();
@@ -774,6 +853,19 @@
             </li>`;
     }
 
+    function renderRoutines() {
+        const list = $('routine-list');
+        if (!list) return;
+        const d = today();
+        list.innerHTML = state.routines.length ? state.routines.map(r => `
+            <li data-id="${r.id}">
+                <input type="text" class="r-name" value="${esc(r.text)}" aria-label="タスク名">
+                <label class="r-min"><input type="number" class="r-dur" min="0" max="1440" value="${r.duration || ''}" placeholder="—" aria-label="時間（分）">分</label>
+                ${r.skipDate === d ? '<button type="button" class="btn secondary small" data-act="routine-unskip" data-id="' + r.id + '">今日も出す</button>' : ''}
+                <button type="button" class="del" data-act="routine-delete" data-id="${r.id}" aria-label="削除">×</button>
+            </li>`).join('') : '<li class="empty">まだ登録がありません</li>';
+    }
+
     function renderTasks() {
         const d = today();
         const active = state.tasks.filter(t => !t.completed && t.date <= d)
@@ -805,6 +897,10 @@
                 case 'carry': moveOverdueToToday(); break;
                 case 'sync': syncAll({ interactive: true }); break;
                 case 'cloud-login': cloudLogin(); break;
+                case 'routine-delete': deleteRoutine(id); break;
+                case 'routine-unskip': updateRoutine(id, { skipDate: null }); ensureRoutineTasksToday(); save(); render(); renderRoutines(); break;
+                case 'routines': renderRoutines(); $('routine-dialog').showModal(); break;
+                case 'close-routines': $('routine-dialog').close(); break;
                 case 'cloud-logout': cloudLogout(); break;
             }
         });
@@ -828,6 +924,23 @@
             task.date = today();
             input.value = '';
             toggleTimer(task.id);
+        });
+
+        // 毎日のタスク
+        $('routine-form').addEventListener('submit', e => {
+            e.preventDefault();
+            const name = $('routine-name');
+            if (!name.value.trim()) { name.focus(); return; }
+            addRoutine(name.value, parseInt($('routine-dur').value, 10) || 0);
+            name.value = ''; $('routine-dur').value = '';
+            name.focus();
+        });
+        $('routine-list').addEventListener('change', e => {
+            const li = e.target.closest('li[data-id]');
+            if (!li) return;
+            const text = li.querySelector('.r-name').value.trim();
+            if (!text) { renderRoutines(); return; }
+            updateRoutine(li.dataset.id, { text, duration: parseInt(li.querySelector('.r-dur').value, 10) || 0 });
         });
 
         // 設定
@@ -925,6 +1038,11 @@
                 if (cloudSaveTimer) saveToCloud().then(fetchCloud); else fetchCloud();
             }
         });
+        // 閉じる・切り替える直前に、待っている変更をすぐ送る
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden' && cloudSaveTimer) saveToCloud();
+        });
+        window.addEventListener('pagehide', () => { if (cloudSaveTimer) saveToCloud(); });
         window.addEventListener('online', () => { if (currentUser) saveToCloud(); else renderCloud(); });
         window.addEventListener('offline', renderCloud);
 
@@ -943,5 +1061,5 @@
     if (tokenValid()) setTimeout(() => syncAll(), 500);
 
     // テスト用
-    window.__df = { state: () => state, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
+    window.__df = { state: () => state, addRoutine, deleteRoutine, cleanRoutines, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
 })();

@@ -49,6 +49,11 @@ button, input { font: inherit; color: inherit; }
     background: transparent; border: 1px solid var(--border); border-radius: 999px;
     padding: 5px 12px; font-size: 0.78rem; color: var(--muted); cursor: pointer; white-space: nowrap;
 }
+.pill-btn {
+    background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 12px; font-size: 0.8rem; cursor: pointer; white-space: nowrap; color: var(--text);
+}
+.pill-btn:hover { background: rgba(255, 255, 255, 0.1); }
 .cloud-status.ok { color: var(--success); border-color: rgba(34, 197, 94, 0.4); }
 .cloud-status.warn { color: #fbbf24; border-color: rgba(245, 158, 11, 0.45); }
 .cloud-status.bad { color: var(--danger); border-color: rgba(239, 68, 68, 0.5); }
@@ -201,3 +206,24 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
     transition: opacity .2s, transform .2s; max-width: calc(100vw - 32px);
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ── 毎日のタスク ─────────────────────── */
+.routine-form { display: flex; gap: 8px; align-items: center; }
+.routine-form #routine-name, .routine-list .r-name {
+    flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--r-sm); font-size: 0.92rem;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+}
+.r-min { display: flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+.r-min input {
+    width: 58px; padding: 9px 6px; border-radius: var(--r-sm); text-align: center; font-size: 0.9rem;
+    background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+}
+.routine-list { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; max-height: 50vh; overflow-y: auto; }
+.routine-list li { display: flex; align-items: center; gap: 8px; }
+.routine-list .r-name:not(:focus) { background: transparent; border-color: transparent; }
+@media (max-width: 520px) {
+    .top { flex-direction: column; gap: 10px; }
+    .top h1 { white-space: nowrap; }
+    .top-right { width: 100%; gap: 6px; }
+    .top-right .icon-btn { margin-left: auto; width: 36px; height: 36px; }
+}

@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=101">
+    <link rel="stylesheet" href="style.css?v=103">
     <script src="https://accounts.google.com/gsi/client" async></script>
     <!-- クラウド同期（Firebase） -->
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
@@ -37,6 +37,7 @@
             </div>
             <div class="top-right">
             <button type="button" id="cloud-status" class="cloud-status" title="クラウド同期"></button>
+            <button type="button" class="pill-btn" data-act="routines" title="毎日のタスクを登録・編集">↻ 毎日のタスク</button>
             <button type="button" id="btn-settings" class="icon-btn" title="設定" aria-label="設定">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
             </button>
@@ -57,7 +58,7 @@
                         <button type="submit" class="btn secondary">＋ 追加</button>
                         <button type="button" id="btn-measure" class="btn primary" title="予定にない作業をタスクにしてすぐ計測">▶ 今すぐ計測</button>
                     </div>
-                    <p class="hint">「追加」は今日のタスクへ。「今すぐ計測」は予定にない作業をその場で計測します。「60分」「明日」「毎日」も書けます。</p>
+                    <p class="hint">「追加」は今日のタスクへ。「今すぐ計測」は予定にない作業をその場で計測します。「60分」「明日」も書けます。毎日やることは上の「毎日のタスク」から登録します。</p>
                 </form>
 
                 <div id="carry-bar" class="carry-bar"></div>
@@ -107,8 +108,23 @@
         </form>
     </dialog>
 
+    <!-- 毎日のタスク -->
+    <dialog id="routine-dialog">
+        <div class="settings">
+            <h2>毎日のタスク</h2>
+            <p class="sub">ここに登録したものは、毎朝5時に今日のタスクへ自動で入ります。今日のタスクで × を押すと、その日だけスキップします。</p>
+            <form id="routine-form" class="routine-form" autocomplete="off">
+                <input type="text" id="routine-name" placeholder="例: 単語帳">
+                <label class="r-min"><input type="number" id="routine-dur" min="0" max="1440" placeholder="30">分</label>
+                <button type="submit" class="btn primary">追加</button>
+            </form>
+            <ul id="routine-list" class="routine-list"></ul>
+            <div class="row end"><button type="button" class="btn primary" data-act="close-routines">閉じる</button></div>
+        </div>
+    </dialog>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=101"></script>
+    <script src="app.js?v=103"></script>
 </body>
 </html>
