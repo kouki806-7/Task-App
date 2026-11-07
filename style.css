@@ -283,3 +283,6 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .problems { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .problem { padding: 10px 12px; border-radius: var(--r-md); border: 1px solid rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.06); font-size: 0.85rem; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .problem a { color: #fca5a5; }
+
+.paused-log { display: inline-flex; align-items: center; gap: 6px; }
+.paused-log .link-btn { font-size: 0.72rem; padding: 0; }

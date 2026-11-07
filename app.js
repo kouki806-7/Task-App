@@ -102,6 +102,7 @@
             migrated = true;
         }
         cleanRoutines();
+        cleanPaused();
         if (!rollover() && migrated) save(true);
     }
 
@@ -306,6 +307,7 @@
         const task = state.tasks.find(t => t.id === id);
         if (!task) return;
         setCompleted(task, !task.completed);
+        if (task.completed) cleanPaused();
         save(); render();
     }
 
@@ -353,6 +355,40 @@
         if (!t.isRunning) return;
         t.accumulatedSeconds = elapsed();
         t.isRunning = false; t.startTime = null;
+    }
+
+    // 一時停止中の計測を破棄（記録は残さない。タスク自体は残る）
+    function discardPaused(id) {
+        const task = state.tasks.find(t => t.id === id);
+        const sec = pausedSecondsOf(id);
+        if (!confirm(`「${task ? task.text : 'タスク'}」の一時停止中の計測（${fmtTimer(sec)}）を破棄しますか？`)) return;
+        if (state.timer.taskId === id) resetTimer();
+        state.pausedTimers = state.pausedTimers.filter(p => p.taskId !== id);
+        save(); render();
+        toast('一時停止中の計測を破棄しました');
+    }
+
+    function pausedLogs() {
+        const list = state.pausedTimers.filter(p => p.accumulatedSeconds > 0).map(p => p.taskId);
+        const t = state.timer;
+        if (t.taskId && !t.isRunning && t.accumulatedSeconds > 0) list.push(t.taskId);
+        return list;
+    }
+
+    function discardAllPaused() {
+        const ids = pausedLogs();
+        if (!ids.length || !confirm(`一時停止中の計測 ${ids.length} 件をすべて破棄しますか？`)) return;
+        if (!state.timer.isRunning) resetTimer();
+        state.pausedTimers = [];
+        save(); render();
+        toast(`${ids.length} 件の計測を破棄しました`);
+    }
+
+    // 対象のタスクが消えた・完了した一時停止ログを片付ける
+    function cleanPaused() {
+        const alive = id => state.tasks.some(t => t.id === id && !t.completed);
+        state.pausedTimers = state.pausedTimers.filter(p => alive(p.taskId));
+        if (state.timer.taskId && !alive(state.timer.taskId)) resetTimer();
     }
 
     function toggleTimer(id) {
@@ -418,12 +454,17 @@
             }
             const client = google.accounts.oauth2.initTokenClient({
                 client_id: state.settings.clientId,
+                // 前回と同じアカウントを指定して、アカウント選択を省く
+                login_hint: state.settings.gsync.email || (currentUser && currentUser.email) || undefined,
                 scope: SCOPE,
                 callback: resp => {
                     if (resp.error) { reject(new Error(resp.error_description || resp.error)); return; }
                     token = { access_token: resp.access_token, scope: resp.scope || '',
                         expires_at: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
                     try { localStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch (e) { /* ignore */ }
+                    // 次回からは自動で接続する
+                    state.settings.gsync.autoConnect = true;
+                    if (!state.settings.gsync.email && currentUser && currentUser.email) state.settings.gsync.email = currentUser.email;
                     resolve();
                 },
                 error_callback: err => reject(new Error((err && err.message) || 'ログインがキャンセルされました'))
@@ -432,7 +473,31 @@
         });
     }
 
+    // ── 自動接続 ───────────────────────────────────────────
+    // ブラウザはページを開いただけでは Google のログイン画面（ポップアップ）を開かせないため、
+    // 開いた直後の最初の操作（タップ・クリック・キー入力）に合わせて自動で接続する。
+    // 一度許可していれば、ポップアップは一瞬開いてすぐ閉じる（ボタン操作は不要）。
+    let autoArmed = false;
+    function armAutoConnect() {
+        const g = state.settings.gsync;
+        if (autoArmed || !g.autoConnect || tokenValid()) return;
+        autoArmed = true;
+        const handler = e => {
+            // 「Googleと同期」ボタンなら、そちらの処理に任せる
+            if (e.target && e.target.closest && e.target.closest('[data-act="sync"],[data-act="reconsent"],dialog')) return;
+            document.removeEventListener('click', handler, true);
+            document.removeEventListener('keydown', handler, true);
+            autoArmed = false;
+            if (!tokenValid() && !busy) syncAll({ interactive: true });
+        };
+        document.addEventListener('click', handler, true);
+        document.addEventListener('keydown', handler, true);
+        renderSchedule();
+    }
+
     function disconnect() {
+        state.settings.gsync.autoConnect = false;
+        save();
         if (token && window.google && google.accounts && google.accounts.oauth2) {
             try { google.accounts.oauth2.revoke(token.access_token, () => {}); } catch (e) { /* ignore */ }
         }
@@ -659,6 +724,7 @@
             save();
         } catch (e) {
             if (e.message !== 'NO_TOKEN') { console.error('[sync]', e); syncError = '同期に失敗しました: ' + e.message; }
+            else setTimeout(armAutoConnect, 0);
         } finally {
             busy = false;
             render();
@@ -851,6 +917,7 @@
         renderSchedule();
         renderNowBar();
         renderCarryBar();
+        renderPausedBar();
         renderTasks();
     }
 
@@ -907,6 +974,7 @@
         const connected = tokenValid();
         const status = busy ? '読み込み中…'
             : connected ? (g.lastSyncAt ? `Google 最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google 接続済み')
+            : g.autoConnect ? 'Google：画面に触れると自動で接続'
             : (g.lastSyncAt ? 'Google 再接続が必要' : 'Google 未接続');
 
         // カレンダー／ToDo／実績の登録 それぞれの結果
@@ -956,8 +1024,17 @@
             <div class="now-row">
                 <span class="now-time" id="now-time">${fmtTimer(elapsed())}</span>
                 <button type="button" class="btn secondary" data-act="timer" data-id="${task.id}">${t.isRunning ? '一時停止' : '再開'}</button>
+                ${t.isRunning ? '' : `<button type="button" class="btn secondary" data-act="discard" data-id="${task.id}">破棄</button>`}
                 <button type="button" class="btn primary" data-act="finish">完了して記録</button>
             </div>`;
+    }
+
+    function renderPausedBar() {
+        const bar = $('paused-bar');
+        const n = pausedLogs().length;
+        if (n < 2) { bar.classList.remove('visible'); bar.innerHTML = ''; return; }
+        bar.classList.add('visible');
+        bar.innerHTML = `<span>⏸ 一時停止中の計測が ${n} 件あります</span><button type="button" class="btn secondary small" data-act="discard-all">すべて破棄</button>`;
     }
 
     function renderCarryBar() {
@@ -979,7 +1056,7 @@
         if (task.isRoutine) meta.push('<span class="chip">毎日</span>');
         if (task.date < d) meta.push(`<span class="chip old">${task.date.substring(5).replace('-', '/')}から</span>`);
         if (task.duration) meta.push(`<span>🕒 ${task.duration}分</span>`);
-        if (sec && !running) meta.push(`<span>⏸ ${fmtTimer(sec)}</span>`);
+        if (sec && !running) meta.push(`<span class="paused-log">⏸ ${fmtTimer(sec)}<button type="button" class="link-btn" data-act="discard" data-id="${task.id}">破棄</button></span>`);
         return `
             <li class="task ${task.completed ? 'done' : ''} ${running ? 'running' : ''}">
                 <button type="button" class="check ${task.completed ? 'on' : ''}" data-act="toggle" data-id="${task.id}" aria-label="完了"></button>
@@ -1094,6 +1171,8 @@
                 case 'delete': deleteTask(id); break;
                 case 'timer': toggleTimer(id); break;
                 case 'finish': finishTimer(); break;
+                case 'discard': discardPaused(id); break;
+                case 'discard-all': discardAllPaused(); break;
                 case 'carry': moveOverdueToToday(); break;
                 case 'sync': syncAll({ interactive: true }); break;
                 case 'reconsent': token = null; syncAll({ interactive: 'consent' }); break;
@@ -1295,6 +1374,9 @@
     initFirebase();
     renderCloud();
     if (tokenValid()) setTimeout(() => syncAll(), 500);
+    else armAutoConnect();
+    // 1時間で接続が切れるので、切れたら次の操作でつなぎ直す
+    setInterval(armAutoConnect, 30000);
 
     // テスト用
     window.__df = { state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
