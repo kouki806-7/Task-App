@@ -1,15 +1,17 @@
-const CACHE_VERSION = 'v106';
+const CACHE_VERSION = 'v108';
 const STATIC_CACHE = `daily-flow-static-${CACHE_VERSION}`;
 const CDN_CACHE = `daily-flow-cdn-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
     './',
     './index.html',
-    './app.js?v=106',
-    './style.css?v=106',
+    './app.js?v=107',
+    './style.css?v=108',
     './manifest.json',
     './icon-192.png',
     './icon-512.png',
+    './icon-maskable-192.png',
+    './icon-maskable-512.png',
 ];
 
 // Google API への通信（予定・ToDo・ログイン）はキャッシュしない

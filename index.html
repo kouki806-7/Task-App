@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=106">
+    <link rel="stylesheet" href="style.css?v=108">
     <script src="https://accounts.google.com/gsi/client" async></script>
     <!-- クラウド同期（Firebase） -->
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
@@ -122,14 +122,33 @@
                 <div class="row"><button type="button" id="btn-save-fb" class="btn secondary">保存して接続</button></div>
             </details>
 
-            <h3>Googleカレンダー・ToDo連携</h3>
-            <p class="sub" id="google-status"></p>
-            <label for="client-id">OAuth クライアントID</label>
-            <input type="text" id="client-id" spellcheck="false">
+            <h3>Googleカレンダー・ToDo連携（自動ログイン）</h3>
+            <p class="sub">自分のGoogleアカウントで動く中継スクリプトを一度だけ用意すると、アプリを開いた時点で予定とToDoを自動で読み込みます（ログイン画面は出ません）。
+                <a href="https://github.com/kouki806-7/Task-App/blob/main/gas/README.md" target="_blank" rel="noopener">設定手順 ↗</a></p>
+            <p class="sub" id="gas-status"></p>
+            <label for="gas-key">① 合言葉（中継スクリプトの SECRET に貼り付けます）</label>
             <div class="row">
-                <button type="button" id="btn-save-client" class="btn secondary">保存</button>
-                <button type="button" id="btn-disconnect" class="btn secondary">接続を解除</button>
+                <input type="text" id="gas-key" spellcheck="false" autocomplete="off" style="flex:1;min-width:0">
+                <button type="button" id="btn-gas-key" class="btn secondary">作る</button>
+                <button type="button" id="btn-gas-copy" class="btn secondary">コピー</button>
             </div>
+            <label for="gas-url">② 中継スクリプトのURL（…/exec で終わるURL）</label>
+            <input type="text" id="gas-url" spellcheck="false" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec">
+            <div class="row">
+                <button type="button" id="btn-gas-save" class="btn primary">保存して接続テスト</button>
+                <button type="button" id="btn-gas-clear" class="btn secondary">解除</button>
+            </div>
+
+            <details class="fb-config">
+                <summary>中継スクリプトを使わない場合（毎回ログインする方式）</summary>
+                <p class="sub" id="google-status"></p>
+                <label for="client-id">OAuth クライアントID</label>
+                <input type="text" id="client-id" spellcheck="false">
+                <div class="row">
+                    <button type="button" id="btn-save-client" class="btn secondary">保存</button>
+                    <button type="button" id="btn-disconnect" class="btn secondary">接続を解除</button>
+                </div>
+            </details>
 
             <h3>データ</h3>
             <p class="sub">データはこのブラウザとクラウド（ログイン時）に保存されます。念のための控えとしてバックアップも取れます。</p>
@@ -145,6 +164,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=106"></script>
+    <script src="app.js?v=107"></script>
 </body>
 </html>

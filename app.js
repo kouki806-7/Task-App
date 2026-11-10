@@ -480,7 +480,7 @@
     let autoArmed = false;
     function armAutoConnect() {
         const g = state.settings.gsync;
-        if (autoArmed || !g.autoConnect || tokenValid()) return;
+        if (autoArmed || gasReady() || !g.autoConnect || tokenValid()) return;
         autoArmed = true;
         const handler = e => {
             // 「Googleと同期」ボタンなら、そちらの処理に任せる
@@ -532,40 +532,49 @@
     }
 
     // Google ToDo → タスク
+    const tasksUpdatedMin = () => new Date(Date.now() - 60 * 86400000).toISOString();
+
     async function pullGoogleTasks() {
-        const g = state.settings.gsync;
-        const d = today();
-        const updatedMin = new Date(Date.now() - 60 * 86400000).toISOString();
+        const updatedMin = tasksUpdatedMin();
         const lists = await api(`${TASKS_API}/users/@me/lists?maxResults=100`);
-        const seen = new Set();
+        const all = [];
         for (const list of (lists.items || [])) {
             let pageToken = '';
             do {
                 const q = new URLSearchParams({ showCompleted: 'true', showHidden: 'true', maxResults: '100', updatedMin });
                 if (pageToken) q.set('pageToken', pageToken);
                 const res = await api(`${TASKS_API}/lists/${encodeURIComponent(list.id)}/tasks?${q}`);
-                for (const gt of (res.items || [])) {
-                    const title = (gt.title || '').trim();
-                    if (!title) continue;
-                    seen.add(gt.id);
-                    const local = state.tasks.find(t => t.gtaskId === gt.id);
-                    if (gt.status === 'completed' || gt.deleted) {
-                        if (local && !local.completed) setCompleted(local, true);
-                        continue;
-                    }
-                    if (g.doneGtaskIds.includes(gt.id)) continue; // アプリで完了・削除済み
-                    let date = gt.due ? gt.due.substring(0, 10) : d;
-                    if (date < d) date = d;
-                    if (local) {
-                        local.text = title;
-                        if (!local.completed) local.date = date;
-                    } else {
-                        state.tasks.push({ id: genId(), gtaskId: gt.id, source: 'gtasks', text: title,
-                            duration: 0, tag: 'タスク', date, completed: false, isRoutine: false });
-                    }
-                }
+                all.push(...(res.items || []));
                 pageToken = res.nextPageToken || '';
             } while (pageToken);
+        }
+        applyGoogleTasks(all);
+    }
+
+    // Google ToDo の一覧をアプリのタスクに反映
+    function applyGoogleTasks(items) {
+        const g = state.settings.gsync;
+        const d = today();
+        const seen = new Set();
+        for (const gt of items) {
+            const title = (gt.title || '').trim();
+            if (!title) continue;
+            seen.add(gt.id);
+            const local = state.tasks.find(t => t.gtaskId === gt.id);
+            if (gt.status === 'completed' || gt.deleted) {
+                if (local && !local.completed) setCompleted(local, true);
+                continue;
+            }
+            if (g.doneGtaskIds.includes(gt.id)) continue; // アプリで完了・削除済み
+            let date = gt.due ? gt.due.substring(0, 10) : d;
+            if (date < d) date = d;
+            if (local) {
+                local.text = title;
+                if (!local.completed) local.date = date;
+            } else {
+                state.tasks.push({ id: genId(), gtaskId: gt.id, source: 'gtasks', text: title,
+                    duration: 0, tag: 'タスク', date, completed: false, isRoutine: false });
+            }
         }
         // Google 側で消えた未完了タスクは外す（計測中・一時停止中のものは残す）
         state.tasks = state.tasks.filter(t => !t.gtaskId || t.completed || seen.has(t.gtaskId)
@@ -573,12 +582,19 @@
     }
 
     // カレンダー → 今日の予定（表示のみ）
+    // 今日（0時〜翌5時）の範囲
+    function eventRange() {
+        const [y, m, dd] = today().split('-').map(Number);
+        return { timeMin: new Date(y, m - 1, dd, 0, 0).toISOString(), timeMax: new Date(y, m - 1, dd + 1, DAY_BOUNDARY_HOUR, 0).toISOString() };
+    }
+    function applyEvents(items) {
+        items.sort((a, b) => a.allDay !== b.allDay ? (a.allDay ? -1 : 1) : (a.startDate + a.start).localeCompare(b.startDate + b.start));
+        state.settings.gsync.todayEvents = { date: today(), items };
+    }
+
     async function pullCalendarEvents() {
         const g = state.settings.gsync;
-        const d = today();
-        const [y, m, dd] = d.split('-').map(Number);
-        const timeMin = new Date(y, m - 1, dd, 0, 0).toISOString();
-        const timeMax = new Date(y, m - 1, dd + 1, DAY_BOUNDARY_HOUR, 0).toISOString();
+        const { timeMin, timeMax } = eventRange();
         const ids = ['primary', ...(state.settings.additionalCalendarIds || [])].filter(id => id && id !== g.calendarId);
         const items = [];
         for (const calId of ids) {
@@ -604,8 +620,7 @@
                 });
             });
         }
-        items.sort((a, b) => a.allDay !== b.allDay ? (a.allDay ? -1 : 1) : (a.startDate + a.start).localeCompare(b.startDate + b.start));
-        g.todayEvents = { date: d, items };
+        applyEvents(items);
     }
 
     // 実績 → 専用カレンダー
@@ -649,6 +664,12 @@
         return cal.id;
     }
 
+    function recordPayload(rec) {
+        const { start, end } = recordDateTimes(rec);
+        return { id: rec.id, title: REC_PREFIX + (rec.title || '').replace(/^⏱\s*/, ''),
+            start, end, description: `${rec.memo || ''}\nDaily Flow のタイマー記録` };
+    }
+
     async function pushRecords() {
         const recs = pendingRecords();
         if (!recs.length) return 0;
@@ -677,6 +698,69 @@
         return n;
     }
 
+    // ── 自動ログイン用の中継（Google Apps Script） ─────────────
+    // 自分の Google アカウントで動くスクリプトを経由するので、アプリ側でのログインが要らない。
+    const gasReady = () => !!(state.settings.gas && state.settings.gas.url && state.settings.gas.key);
+    const googleReady = () => gasReady() || tokenValid();
+
+    async function gasCall(action, payload) {
+        const { url, key } = state.settings.gas;
+        let res;
+        if (payload) {
+            // text/plain の POST にして、ブラウザの事前確認（CORS preflight）を避ける
+            res = await fetch(url, { method: 'POST', body: JSON.stringify({ key, action, ...payload }) });
+        } else {
+            const q = new URLSearchParams({ key, action });
+            if (action === 'today') {
+                const r = eventRange();
+                q.set('timeMin', r.timeMin); q.set('timeMax', r.timeMax);
+                q.set('calendars', (state.settings.additionalCalendarIds || []).join(','));
+                q.set('updatedMin', tasksUpdatedMin());
+            }
+            res = await fetch(`${url}${url.includes('?') ? '&' : '?'}${q}`);
+        }
+        if (!res.ok) throw new Error(`中継スクリプトに接続できません（${res.status}）`);
+        let data;
+        try { data = await res.json(); }
+        catch (e) { throw new Error('中継スクリプトの応答を読めません。デプロイの「アクセスできるユーザー」が「全員」になっているか確認してください'); }
+        if (!data.ok) {
+            throw new Error(data.error === 'unauthorized'
+                ? '合言葉が一致しません。Code.gs の SECRET とアプリの合言葉を同じにしてください'
+                : (data.error || '中継スクリプトでエラーが起きました'));
+        }
+        if (data.email) state.settings.gas.email = data.email;
+        return data;
+    }
+
+    function gasPartError(part) {
+        const msg = (part && part.error) || '不明なエラー';
+        if (/TASKS_SERVICE_MISSING|Tasks is not defined/i.test(msg)) return { type: 'gas-tasks' };
+        return { type: 'other', message: msg };
+    }
+
+    async function syncViaGas() {
+        const g = state.settings.gsync;
+        const data = await gasCall('today');
+        if (data.events && data.events.ok) { applyEvents(data.events.items || []); gStatus.calendar = 'ok'; }
+        else gStatus.calendar = { kind: 'calendar', ...gasPartError(data.events) };
+        if (data.tasks && data.tasks.ok) { applyGoogleTasks(data.tasks.items || []); gStatus.tasks = 'ok'; }
+        else gStatus.tasks = { kind: 'tasks', ...gasPartError(data.tasks) };
+        const recs = pendingRecords();
+        if (recs.length) {
+            const r = await gasCall('push', { records: recs.map(recordPayload) });
+            if (r.push && r.push.ok) {
+                const map = new Map((r.push.items || []).map(x => [x.id, x.eventId]));
+                let n = 0;
+                recs.forEach(rec => { if (map.get(rec.id)) { rec.gsyncEventId = map.get(rec.id); n++; } });
+                gStatus.push = 'ok';
+                if (n) toast(`実績 ${n} 件を「${REC_CAL_NAME}」に登録しました`);
+            } else {
+                gStatus.push = { kind: 'push', ...gasPartError(r.push) };
+            }
+        }
+        g.lastSyncAt = Date.now();
+    }
+
     // Google の API エラーを、利用者がとるべき行動ごとに分ける
     function classifyGoogleError(e, kind) {
         const text = `${e.reason || ''} ${e.apiMessage || e.message || ''}`;
@@ -693,6 +777,15 @@
         if (busy) return;
         busy = true; syncError = ''; renderSchedule();
         try {
+            if (gasReady()) {
+                const g = state.settings.gsync;
+                if (!g.since) g.since = today();
+                gStatus = { calendar: null, tasks: null, push: null };
+                try { await syncViaGas(); }
+                catch (e) { console.warn('[gas]', e); syncError = e.message; }
+                save();
+                return;
+            }
             if (!tokenValid()) {
                 if (!interactive) return;
                 await connect(typeof interactive === 'string' ? interactive : '');
@@ -971,8 +1064,9 @@
             rec = `<p class="rec">⏱ 今日の実績 ${todayRecs.length} 件 — ${allPushed ? `「${REC_CAL_NAME}」に登録済み` : `${PUSH_HOUR}時以降に「${REC_CAL_NAME}」へ登録します`}</p>`;
         }
 
-        const connected = tokenValid();
+        const connected = googleReady();
         const status = busy ? '読み込み中…'
+            : gasReady() ? (g.lastSyncAt ? `Google（自動）最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google（自動）')
             : connected ? (g.lastSyncAt ? `Google 最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google 接続済み')
             : g.autoConnect ? 'Google：画面に触れると自動で接続'
             : (g.lastSyncAt ? 'Google 再接続が必要' : 'Google 未接続');
@@ -987,6 +1081,9 @@
         const apiLabel = { calendar: 'Google Calendar API', tasks: 'Google Tasks API', push: 'Google Calendar API' };
         const problems = ['calendar', 'tasks', 'push'].filter(k => gStatus[k] && gStatus[k] !== 'ok').map(k => {
             const st = gStatus[k];
+            if (st.type === 'gas-tasks') {
+                return `<div class="problem"><p><b>${label[k]}</b>：中継スクリプトに「Google Tasks API」サービスが追加されていません。Apps Script の左の「サービス」＋ から追加し、もう一度デプロイしてください。</p></div>`;
+            }
             if (st.type === 'scope') {
                 return `<div class="problem"><p><b>${label[k]}</b>：ログイン時にこの権限が許可されていません（許可画面でチェックが外れていた可能性があります）。</p>
                     <button type="button" class="btn secondary small" data-act="reconsent">権限を許可し直す</button></div>`;
@@ -1268,8 +1365,54 @@
             $('google-status').textContent = tokenValid()
                 ? `接続中${g.calendarId ? `（実績の登録先: 「${REC_CAL_NAME}」）` : ''}`
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
+            const gas = state.settings.gas || {};
+            $('gas-key').value = gas.key || '';
+            $('gas-url').value = gas.url || '';
+            renderGasStatus();
             dlg.showModal();
         };
+        const renderGasStatus = (msg) => {
+            const gas = state.settings.gas || {};
+            $('gas-status').textContent = msg || (gasReady()
+                ? `✓ 自動ログイン設定済み${gas.email ? `（${gas.email}）` : ''}`
+                : '未設定');
+        };
+        $('btn-gas-key').addEventListener('click', () => {
+            if ($('gas-key').value && !confirm('合言葉を作り直しますか？（中継スクリプトの SECRET も貼り替えが必要になります）')) return;
+            const a = new Uint8Array(18); crypto.getRandomValues(a);
+            $('gas-key').value = Array.from(a, b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 57]).join('');
+        });
+        $('btn-gas-copy').addEventListener('click', async () => {
+            const v = $('gas-key').value;
+            if (!v) { toast('先に「作る」を押してください'); return; }
+            try { await navigator.clipboard.writeText(v); toast('合言葉をコピーしました'); }
+            catch (e) { $('gas-key').select(); toast('選択したのでコピーしてください'); }
+        });
+        $('btn-gas-save').addEventListener('click', async () => {
+            const url = $('gas-url').value.trim(), key = $('gas-key').value.trim();
+            if (!key) { toast('合言葉を入れてください'); return; }
+            if (!/^https:\/\/script\.google(usercontent)?\.com\/.+\/exec(\?.*)?$/.test(url)) {
+                toast('URLは https://script.google.com/macros/s/…/exec の形です'); return;
+            }
+            const prev = state.settings.gas;
+            state.settings.gas = { url, key };
+            renderGasStatus('接続テスト中…');
+            try {
+                await gasCall('ping');
+                save();
+                renderGasStatus();
+                toast('自動ログインを設定しました');
+                syncAll();
+            } catch (e) {
+                state.settings.gas = prev;
+                renderGasStatus('✕ ' + e.message);
+            }
+        });
+        $('btn-gas-clear').addEventListener('click', () => {
+            if (!gasReady() || !confirm('自動ログインの設定を解除しますか？')) return;
+            state.settings.gas = null;
+            save(); renderGasStatus(); render();
+        });
         $('btn-settings').addEventListener('click', openSettings);
         $('cloud-status').addEventListener('click', openSettings);
         $('btn-save-fb').addEventListener('click', () => {
@@ -1338,7 +1481,7 @@
         // 1分ごと: 日付の切り替わり、23時以降の実績登録、予定の現在地の更新
         setInterval(() => {
             if (rollover()) render();
-            if (!busy && tokenValid() && pendingRecords().length) syncAll();
+            if (!busy && googleReady() && pendingRecords().length) syncAll();
             else renderSchedule();
         }, 60000);
 
@@ -1347,7 +1490,7 @@
             if (document.visibilityState !== 'visible') return;
             if (rollover()) render();
             const g = state.settings.gsync;
-            if (tokenValid() && (!g.lastSyncAt || Date.now() - g.lastSyncAt > 10 * 60000)) syncAll();
+            if (googleReady() && (!g.lastSyncAt || Date.now() - g.lastSyncAt > 10 * 60000)) syncAll();
             // 他の端末での変更を取り込む（未送信の変更があるときは先に送る）
             if (currentUser && Date.now() - lastCloudFetch > 60000) {
                 if (cloudSaveTimer) saveToCloud().then(fetchCloud); else fetchCloud();
@@ -1373,7 +1516,8 @@
     render();
     initFirebase();
     renderCloud();
-    if (tokenValid()) setTimeout(() => syncAll(), 500);
+    // 中継スクリプトがあれば、開いた時点で自動で読み込む（ログイン不要）
+    if (googleReady()) setTimeout(() => syncAll(), 300);
     else armAutoConnect();
     // 1時間で接続が切れるので、切れたら次の操作でつなぎ直す
     setInterval(armAutoConnect, 30000);
