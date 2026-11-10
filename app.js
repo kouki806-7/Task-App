@@ -724,8 +724,10 @@
         try { data = await res.json(); }
         catch (e) { throw new Error('中継スクリプトの応答を読めません。デプロイの「アクセスできるユーザー」が「全員」になっているか確認してください'); }
         if (!data.ok) {
-            throw new Error(data.error === 'unauthorized'
-                ? '合言葉が一致しません。Code.gs の SECRET とアプリの合言葉を同じにしてください'
+            throw new Error(data.error === 'secret_not_set'
+                ? '公開中のスクリプトに合言葉が入っていません。Code.gs の SECRET を書き換えて保存し、「デプロイを管理」→ ✏ →「新バージョン」で更新してください'
+                : data.error === 'unauthorized'
+                ? '合言葉が一致しません。Code.gs の SECRET を確認して保存し、「デプロイを管理」→ ✏ →「新バージョン」で更新してください（保存しただけでは公開中のスクリプトに反映されません）'
                 : (data.error || '中継スクリプトでエラーが起きました'));
         }
         if (data.email) state.settings.gas.email = data.email;

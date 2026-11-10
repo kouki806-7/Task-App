@@ -11,7 +11,7 @@
  * 必要なサービス: 左の「サービス」＋ から「Google Tasks API」を追加（ID: Tasks）
  */
 
-const SECRET = 'ここに合言葉を貼り付け';
+const SECRET = 'ここに合言葉を貼り付け';  // 例: const SECRET = 'AbC123xyz...';（' ' の内側だけを置き換える）
 const REC_CAL_NAME = 'Daily Flow 実績';
 const TZ = 'Asia/Tokyo';
 
@@ -26,7 +26,11 @@ function doPost(e) {
 }
 
 function handle_(p, body) {
-  if (!SECRET || SECRET === 'ここに合言葉を貼り付け' || p.key !== SECRET) {
+  const secret = String(SECRET || '').trim();
+  if (!secret || secret === 'ここに合言葉を貼り付け') {
+    return json_({ ok: false, error: 'secret_not_set' }); // SECRET が未設定のまま公開されている
+  }
+  if (String(p.key || '').trim() !== secret) {
     return json_({ ok: false, error: 'unauthorized' });
   }
   try {
