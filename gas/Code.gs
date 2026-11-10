@@ -7,11 +7,12 @@
  *   - タイマーの実績を「Daily Flow 実績」カレンダーに登録する
  * を行います。アプリ側で Google にログインする必要がなくなります。
  *
- * 設定: 下の SECRET を、Daily Flow の設定画面で作った「合言葉」に置き換えてください。
- * 必要なサービス: 左の「サービス」＋ から「Google Tasks API」を追加（ID: Tasks）
+ * 使い方: このコードは書き換えずにそのまま貼り付けます。
+ *   1. 左の「サービス」＋ から「Google Tasks API」を追加（ID: Tasks）
+ *   2. 上の関数の選択欄で setup を選んで「実行」→ 権限を許可
+ *   3. 下の「実行ログ」に出る合言葉を、Daily Flow の設定に貼り付け
+ * 合言葉はこのスクリプトの中（スクリプトプロパティ）に保存されるので、デプロイし直しても変わりません。
  */
-
-const SECRET = 'ここに合言葉を貼り付け';  // 例: const SECRET = 'AbC123xyz...';（' ' の内側だけを置き換える）
 const REC_CAL_NAME = 'Daily Flow 実績';
 const TZ = 'Asia/Tokyo';
 
@@ -26,9 +27,9 @@ function doPost(e) {
 }
 
 function handle_(p, body) {
-  const secret = String(SECRET || '').trim();
-  if (!secret || secret === 'ここに合言葉を貼り付け') {
-    return json_({ ok: false, error: 'secret_not_set' }); // SECRET が未設定のまま公開されている
+  const secret = String(PropertiesService.getScriptProperties().getProperty('secret') || '').trim();
+  if (!secret) {
+    return json_({ ok: false, error: 'secret_not_set' }); // setup をまだ実行していない
   }
   if (String(p.key || '').trim() !== secret) {
     return json_({ ok: false, error: 'unauthorized' });
@@ -152,9 +153,26 @@ function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// 動作確認用: エディタで実行すると、権限の許可画面が出ます（初回のみ）
-function testAuthorize() {
-  Logger.log(Session.getEffectiveUser().getEmail());
-  Logger.log(CalendarApp.getDefaultCalendar().getName());
-  Logger.log(typeof Tasks === 'undefined' ? 'Tasks サービスが未追加です' : 'Tasks OK');
+// ── 初回設定 ───────────────────────────────────────────
+// エディタで setup を選んで「実行」すると、権限の許可と合言葉の作成をまとめて行い、合言葉を実行ログに表示します。
+// 何度実行しても合言葉は同じです（作り直したいときは resetSecret を実行）。
+function setup() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty('secret');
+  if (!secret) {
+    secret = Utilities.getUuid().replace(/-/g, '').slice(0, 24);
+    props.setProperty('secret', secret);
+  }
+  Logger.log('アカウント: ' + Session.getEffectiveUser().getEmail());
+  Logger.log('カレンダー: ' + CalendarApp.getDefaultCalendar().getName());
+  Logger.log(typeof Tasks === 'undefined' ? '⚠ Google Tasks API サービスが未追加です（左の「サービス」＋ から追加）' : 'Google ToDo: OK');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━');
+  Logger.log('合言葉: ' + secret);
+  Logger.log('↑ この合言葉を Daily Flow の設定に貼り付けてください');
+  Logger.log('━━━━━━━━━━━━━━━━━━━━━━━━');
+}
+
+function resetSecret() {
+  PropertiesService.getScriptProperties().deleteProperty('secret');
+  setup();
 }

@@ -725,9 +725,9 @@
         catch (e) { throw new Error('中継スクリプトの応答を読めません。デプロイの「アクセスできるユーザー」が「全員」になっているか確認してください'); }
         if (!data.ok) {
             throw new Error(data.error === 'secret_not_set'
-                ? '公開中のスクリプトに合言葉が入っていません。Code.gs の SECRET を書き換えて保存し、「デプロイを管理」→ ✏ →「新バージョン」で更新してください'
+                ? 'スクリプトで setup をまだ実行していません。Apps Script の関数の選択欄で setup を選んで「実行」してください'
                 : data.error === 'unauthorized'
-                ? '合言葉が一致しません。Code.gs の SECRET を確認して保存し、「デプロイを管理」→ ✏ →「新バージョン」で更新してください（保存しただけでは公開中のスクリプトに反映されません）'
+                ? '合言葉が一致しません。Apps Script で setup をもう一度実行し、実行ログの「合言葉: 」の後ろをそのまま貼り付けてください'
                 : (data.error || '中継スクリプトでエラーが起きました'));
         }
         if (data.email) state.settings.gas.email = data.email;
@@ -1367,7 +1367,7 @@
             $('google-status').textContent = tokenValid()
                 ? `接続中${g.calendarId ? `（実績の登録先: 「${REC_CAL_NAME}」）` : ''}`
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
-            const gas = state.settings.gas || {};
+            const gas = state.settings.gas || state.settings.gasDraft || {};
             $('gas-key').value = gas.key || '';
             $('gas-url').value = gas.url || '';
             renderGasStatus();
@@ -1379,19 +1379,15 @@
                 ? `✓ 自動ログイン設定済み${gas.email ? `（${gas.email}）` : ''}`
                 : '未設定');
         };
-        $('btn-gas-key').addEventListener('click', () => {
-            if ($('gas-key').value && !confirm('合言葉を作り直しますか？（中継スクリプトの SECRET も貼り替えが必要になります）')) return;
-            const a = new Uint8Array(18); crypto.getRandomValues(a);
-            $('gas-key').value = Array.from(a, b => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 57]).join('');
-        });
-        $('btn-gas-copy').addEventListener('click', async () => {
-            const v = $('gas-key').value;
-            if (!v) { toast('先に「作る」を押してください'); return; }
-            try { await navigator.clipboard.writeText(v); toast('合言葉をコピーしました'); }
-            catch (e) { $('gas-key').select(); toast('選択したのでコピーしてください'); }
-        });
+        // 入力途中のURL・合言葉は、接続テスト前でも保存しておく（設定を閉じても消えない）
+        ['gas-url', 'gas-key'].forEach(id => $(id).addEventListener('input', () => {
+            state.settings.gasDraft = { url: $('gas-url').value.trim(), key: $('gas-key').value.trim().replace(/^合言葉[:：]\s*/, '') };
+            save();
+        }));
         $('btn-gas-save').addEventListener('click', async () => {
-            const url = $('gas-url').value.trim(), key = $('gas-key').value.trim();
+            // 「合言葉: xxxx」と行ごと貼られても読めるようにする
+            const url = $('gas-url').value.trim(), key = $('gas-key').value.trim().replace(/^合言葉[:：]\s*/, '');
+            $('gas-key').value = key;
             if (!key) { toast('合言葉を入れてください'); return; }
             if (!/^https:\/\/script\.google(usercontent)?\.com\/.+\/exec(\?.*)?$/.test(url)) {
                 toast('URLは https://script.google.com/macros/s/…/exec の形です'); return;
@@ -1401,6 +1397,7 @@
             renderGasStatus('接続テスト中…');
             try {
                 await gasCall('ping');
+                state.settings.gasDraft = null;
                 save();
                 renderGasStatus();
                 toast('自動ログインを設定しました');
@@ -1412,7 +1409,7 @@
         });
         // 入力中のURLと合言葉で、スクリプトの応答をブラウザで直接開く（原因の切り分け用）
         $('btn-gas-open').addEventListener('click', () => {
-            const url = $('gas-url').value.trim(), key = $('gas-key').value.trim();
+            const url = $('gas-url').value.trim(), key = $('gas-key').value.trim().replace(/^合言葉[:：]\s*/, '');
             if (!url || !key) { toast('URLと合言葉を入れてください'); return; }
             window.open(`${url}${url.includes('?') ? '&' : '?'}action=ping&key=${encodeURIComponent(key)}`, '_blank', 'noopener');
         });
