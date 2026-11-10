@@ -1410,6 +1410,12 @@
                 renderGasStatus('✕ ' + e.message);
             }
         });
+        // 入力中のURLと合言葉で、スクリプトの応答をブラウザで直接開く（原因の切り分け用）
+        $('btn-gas-open').addEventListener('click', () => {
+            const url = $('gas-url').value.trim(), key = $('gas-key').value.trim();
+            if (!url || !key) { toast('URLと合言葉を入れてください'); return; }
+            window.open(`${url}${url.includes('?') ? '&' : '?'}action=ping&key=${encodeURIComponent(key)}`, '_blank', 'noopener');
+        });
         $('btn-gas-clear').addEventListener('click', () => {
             if (!gasReady() || !confirm('自動ログインの設定を解除しますか？')) return;
             state.settings.gas = null;
