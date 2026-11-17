@@ -1,0 +1,16 @@
+{
+  "name": "daily-flow-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daily Flow の Android アプリ（Capacitor）",
+  "scripts": {
+    "sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
+  }
+}

@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=108">
+    <link rel="stylesheet" href="style.css?v=111">
     <script src="https://accounts.google.com/gsi/client" async></script>
     <!-- クラウド同期（Firebase） -->
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
@@ -147,6 +147,17 @@
                 </div>
             </details>
 
+            <div id="app-settings" hidden>
+                <h3>アプリ版の設定</h3>
+                <label class="toggle-row" for="lock-while-timing">
+                    <span>
+                        <span class="toggle-title">計測中は画面を固定する</span>
+                        <span class="sub">▶で計測を始めると、ほかのアプリに切り替えられなくなります。一時停止・完了・破棄で自動で解除されます。急ぎのときは、戻るボタンと履歴ボタンの長押し（ジェスチャー操作なら下からのスワイプ長押し）で解除できます。</span>
+                    </span>
+                    <input type="checkbox" id="lock-while-timing">
+                </label>
+            </div>
+
             <h3>データ</h3>
             <p class="sub">データはこのブラウザとクラウド（ログイン時）に保存されます。念のための控えとしてバックアップも取れます。</p>
             <div class="row">
@@ -161,6 +172,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=110"></script>
+    <script src="app.js?v=111"></script>
 </body>
 </html>

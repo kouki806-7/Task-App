@@ -983,14 +983,18 @@
                 synced: ['☁ 端末間同期 ✓', 'ok'],
                 error: ['☁ 端末間同期：エラー', 'bad']
             };
-            const [label, cls] = map[cloudState] || ['', ''];
+            let [label, cls] = map[cloudState] || ['', ''];
+            if (isNativeApp() && !currentUser) { label = ''; cls = ''; } // アプリ版は準備中なので出さない
             btn.textContent = label;
             btn.className = 'cloud-status ' + cls;
             btn.style.display = label ? '' : 'none';
         }
         const box = $('cloud-account');
         if (box) {
-            if (!state.settings.firebaseConfig) {
+            if (isNativeApp() && !currentUser) {
+                // Google は、アプリに埋め込んだ画面でのログインを禁止しているため、アプリ版では次の段階で対応する
+                box.innerHTML = '<p class="muted">アプリ版での端末間同期は準備中です（次の段階で対応します）。今はデータがこのアプリの中だけに保存されます。PCやブラウザ版のデータは、そちらで「バックアップを保存」したファイルを、下の「バックアップから復元」で読み込めます。</p>';
+            } else if (!state.settings.firebaseConfig) {
                 box.innerHTML = '<p class="muted">Firebase の設定が未入力です。下の「Firebase の設定」に firebaseConfig を貼り付けてください。</p>';
             } else if (currentUser) {
                 box.innerHTML = `
@@ -1005,6 +1009,41 @@
     }
 
     // ════════════════════════════════════════════════════════
+    // Android アプリ版との連携（Capacitor）
+    //   アプリの中で開いたときだけ、計測と連動して
+    //   画面の固定・通知欄のストップウォッチを動かす。ブラウザでは何もしない。
+    // ════════════════════════════════════════════════════════
+    const isNativeApp = () => !!(window.Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform());
+    function focusPlugin() {
+        if (!isNativeApp()) return null;
+        const P = Capacitor.Plugins && Capacitor.Plugins.Focus;
+        if (P) return P;
+        return typeof Capacitor.registerPlugin === 'function' ? Capacitor.registerPlugin('Focus') : null;
+    }
+    let nativeSig = '';          // 前回 Android に伝えた状態
+    let nativeWasRunning = false;
+    function syncNative() {
+        const Focus = focusPlugin();
+        if (!Focus) return;
+        const t = state.timer;
+        const task = t.taskId && state.tasks.find(x => x.id === t.taskId);
+        const st = !task ? 'idle' : t.isRunning ? 'running' : (t.accumulatedSeconds > 0 ? 'paused' : 'idle');
+        const sec = elapsed();
+        const startedAt = Math.round(Date.now() - sec * 1000);
+        // 一時停止中は表示する秒数が変わらないので、状態とタスクが同じなら送り直さない
+        const sig = `${st}|${task ? task.id : ''}|${task ? task.text : ''}|${st === 'paused' ? sec : ''}`;
+        if (sig === nativeSig) return;
+        // 画面の固定は「計測を始めた瞬間」だけ。途中で自分で解除した場合は、次に始めるまで固定し直さない
+        // アプリを開き直したとき（最初の1回）は、計測中でも固定し直さない
+        const firstCall = nativeSig === '';
+        const startLock = !firstCall && st === 'running' && !nativeWasRunning && state.settings.lockWhileTiming !== false;
+        nativeSig = sig;
+        nativeWasRunning = st === 'running';
+        Focus.update({ state: st, title: task ? task.text : '', startedAt, elapsedText: fmtTimer(sec), startLock })
+            .catch(e => console.warn('[focus]', e));
+    }
+
+    // ════════════════════════════════════════════════════════
     // 表示
     // ════════════════════════════════════════════════════════
     function render() {
@@ -1014,6 +1053,7 @@
         renderCarryBar();
         renderPausedBar();
         renderTasks();
+        syncNative();
     }
 
     function renderHeader() {
@@ -1367,6 +1407,8 @@
             $('google-status').textContent = tokenValid()
                 ? `接続中${g.calendarId ? `（実績の登録先: 「${REC_CAL_NAME}」）` : ''}`
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
+            $('app-settings').hidden = !isNativeApp();
+            $('lock-while-timing').checked = state.settings.lockWhileTiming !== false;
             const gas = state.settings.gas || state.settings.gasDraft || {};
             $('gas-key').value = gas.key || '';
             $('gas-url').value = gas.url || '';
@@ -1379,6 +1421,11 @@
                 ? `✓ 自動ログイン設定済み${gas.email ? `（${gas.email}）` : ''}`
                 : '未設定');
         };
+        $('lock-while-timing').addEventListener('change', e => {
+            state.settings.lockWhileTiming = e.target.checked;
+            save();
+        });
+
         // 入力途中のURL・合言葉は、接続テスト前でも保存しておく（設定を閉じても消えない）
         ['gas-url', 'gas-key'].forEach(id => $(id).addEventListener('input', () => {
             state.settings.gasDraft = { url: $('gas-url').value.trim(), key: $('gas-key').value.trim().replace(/^合言葉[:：]\s*/, '') };
@@ -1528,5 +1575,5 @@
     setInterval(armAutoConnect, 30000);
 
     // テスト用
-    window.__df = { state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
+    window.__df = { nativeSig: () => nativeSig, state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
 })();
