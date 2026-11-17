@@ -447,7 +447,10 @@
     const hasScope = sc => !token || !token.scope || token.scope.split(' ').includes(sc);
 
     function connect(prompt = '') {
-        return new Promise((resolve, reject) => {
+        // アプリ版では Google のログイン画面（ポップアップ）を開けないので使わない
+        if (isNativeApp()) return Promise.reject(new Error('アプリ版では、設定の「Googleカレンダー・ToDo連携（自動ログイン）」で中継スクリプトを設定してください'));
+        let timer;
+        const p = new Promise((resolve, reject) => {
             if (!window.google || !google.accounts || !google.accounts.oauth2) {
                 reject(new Error('Googleのログイン用スクリプトを読み込めませんでした。通信状態を確認してください。'));
                 return;
@@ -471,6 +474,9 @@
             });
             client.requestAccessToken({ prompt });
         });
+        // ログイン画面が閉じられたまま応答がないときに、いつまでも待たない
+        const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Googleのログインが完了しませんでした')), 120000); });
+        return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
     }
 
     // ── 自動接続 ───────────────────────────────────────────
@@ -480,7 +486,7 @@
     let autoArmed = false;
     function armAutoConnect() {
         const g = state.settings.gsync;
-        if (autoArmed || gasReady() || !g.autoConnect || tokenValid()) return;
+        if (autoArmed || isNativeApp() || gasReady() || !g.autoConnect || tokenValid()) return;
         autoArmed = true;
         const handler = e => {
             // 「Googleと同期」ボタンなら、そちらの処理に任せる
@@ -703,12 +709,24 @@
     const gasReady = () => !!(state.settings.gas && state.settings.gas.url && state.settings.gas.key);
     const googleReady = () => gasReady() || tokenValid();
 
+    // 応答がないときに「読み込み中」のまま止まらないよう、時間を区切って待つ
+    async function fetchWithTimeout(url, opts = {}, ms = 45000) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), ms);
+        try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+        catch (e) {
+            if (e.name === 'AbortError') throw new Error('中継スクリプトから応答がありません（時間切れ）。通信状態を確認して「Googleと同期」を押してください');
+            throw new Error('中継スクリプトに接続できません。通信状態を確認してください');
+        }
+        finally { clearTimeout(timer); }
+    }
+
     async function gasCall(action, payload) {
         const { url, key } = state.settings.gas;
         let res;
         if (payload) {
             // text/plain の POST にして、ブラウザの事前確認（CORS preflight）を避ける
-            res = await fetch(url, { method: 'POST', body: JSON.stringify({ key, action, ...payload }) });
+            res = await fetchWithTimeout(url, { method: 'POST', body: JSON.stringify({ key, action, ...payload }) });
         } else {
             const q = new URLSearchParams({ key, action });
             if (action === 'today') {
@@ -717,7 +735,7 @@
                 q.set('calendars', (state.settings.additionalCalendarIds || []).join(','));
                 q.set('updatedMin', tasksUpdatedMin());
             }
-            res = await fetch(`${url}${url.includes('?') ? '&' : '?'}${q}`);
+            res = await fetchWithTimeout(`${url}${url.includes('?') ? '&' : '?'}${q}`);
         }
         if (!res.ok) throw new Error(`中継スクリプトに接続できません（${res.status}）`);
         let data;
@@ -773,10 +791,12 @@
     }
     function scopeError() { const e = new Error('scope'); e.type = 'scope'; return e; }
 
-    let busy = false, syncError = '';
+    let busy = false, busySince = 0, syncError = '';
     let gStatus = { calendar: null, tasks: null, push: null }; // null=未実行 / 'ok' / { type, ... }
     async function syncAll({ interactive = false } = {}) {
-        if (busy) return;
+        // 前の読み込みが止まったままなら（2分以上）、やり直せるようにする
+        if (busy && Date.now() - busySince < 120000) return;
+        busySince = Date.now();
         busy = true; syncError = ''; renderSchedule();
         try {
             if (gasReady()) {
@@ -1110,6 +1130,7 @@
         const status = busy ? '読み込み中…'
             : gasReady() ? (g.lastSyncAt ? `Google（自動）最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google（自動）')
             : connected ? (g.lastSyncAt ? `Google 最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google 接続済み')
+            : isNativeApp() ? 'Google 未設定（設定 → 自動ログイン）'
             : g.autoConnect ? 'Google：画面に触れると自動で接続'
             : (g.lastSyncAt ? 'Google 再接続が必要' : 'Google 未接続');
 
@@ -1408,6 +1429,7 @@
                 ? `接続中${g.calendarId ? `（実績の登録先: 「${REC_CAL_NAME}」）` : ''}`
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
             $('app-settings').hidden = !isNativeApp();
+            if (isNativeApp()) refreshNotifStatus();
             $('lock-while-timing').checked = state.settings.lockWhileTiming !== false;
             const gas = state.settings.gas || state.settings.gasDraft || {};
             $('gas-key').value = gas.key || '';
@@ -1421,6 +1443,54 @@
                 ? `✓ 自動ログイン設定済み${gas.email ? `（${gas.email}）` : ''}`
                 : '未設定');
         };
+        // ── 通知の確認（アプリ版） ──
+        const notifCall = async (method) => {
+            const Focus = focusPlugin();
+            if (!Focus) throw new Error('Android との連携が見つかりません');
+            if (typeof Focus[method] !== 'function') throw new Error('OLD_APP');
+            return Focus[method]();
+        };
+        const showNotif = (r) => {
+            const el = $('notif-status');
+            if (!r) return;
+            if (r.enabled && r.channelEnabled !== false) {
+                el.textContent = '✓ 通知は許可されています。計測中は通知欄に経過時間が出ます。';
+            } else if (r.enabled) {
+                el.textContent = '✕ 「計測中のタイマー」の通知がオフになっています。「通知の設定を開く」からオンにしてください。';
+            } else {
+                el.textContent = '✕ 通知が許可されていません。「通知を許可する」を押してください（出てこない場合は「通知の設定を開く」からオンに）。';
+            }
+        };
+        const notifError = (e) => {
+            $('notif-status').textContent = e.message === 'OLD_APP' || /not implemented/i.test(e.message || '')
+                ? 'この機能を使うには、アプリを新しい版に更新してください（Releases から daily-flow.apk を入れ直す）。'
+                : '✕ ' + (e.message || '通知の状態を確認できませんでした');
+        };
+        async function refreshNotifStatus() {
+            try { showNotif(await notifCall('checkNotifications')); } catch (e) { notifError(e); }
+        }
+        $('btn-notif-allow').addEventListener('click', async () => {
+            try {
+                const r = await notifCall('requestNotifications');
+                showNotif(r);
+                if (!r.enabled) toast('許可の確認が出ない場合は「通知の設定を開く」からオンにしてください');
+            } catch (e) { notifError(e); }
+        });
+        $('btn-notif-test').addEventListener('click', async () => {
+            try {
+                const r = await notifCall('testNotification');
+                showNotif(r);
+                toast(r.enabled ? 'テスト通知を出しました。通知欄を確認してください' : '通知が許可されていないため出せません');
+            } catch (e) { notifError(e); }
+        });
+        $('btn-notif-settings').addEventListener('click', async () => {
+            try { await notifCall('openNotificationSettings'); } catch (e) { notifError(e); }
+        });
+        // 通知の設定画面から戻ってきたら、状態を確認し直す
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && isNativeApp() && $('settings-dialog').open) refreshNotifStatus();
+        });
+
         $('lock-while-timing').addEventListener('change', e => {
             state.settings.lockWhileTiming = e.target.checked;
             save();
@@ -1448,6 +1518,7 @@
                 save();
                 renderGasStatus();
                 toast('自動ログインを設定しました');
+                busy = false; // 前の読み込みが止まっていても、すぐ読み込み直す
                 syncAll();
             } catch (e) {
                 state.settings.gas = prev;
@@ -1517,6 +1588,9 @@
                 if (!confirm('今のデータをバックアップの内容で置き換えます。よろしいですか？')) return;
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 load(); render(); dlg.close(); toast('復元しました');
+                // 復元した設定に中継スクリプトがあれば、すぐ予定とToDoを読み込む
+                busy = false;
+                if (googleReady()) syncAll();
             } catch (err) {
                 toast('復元できませんでした: ' + err.message);
             } finally {

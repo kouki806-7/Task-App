@@ -9,6 +9,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.provider.Settings;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -41,6 +42,7 @@ public class FocusPlugin extends Plugin {
 
     private static final String CHANNEL_ID = "timer";
     private static final int NOTIFICATION_ID = 1001;
+    private static final int TEST_NOTIFICATION_ID = 1002;
     private boolean askedNotificationPermission = false;
 
     /**
@@ -93,6 +95,92 @@ public class FocusPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("pinned", isPinned());
         call.resolve(ret);
+    }
+
+    // ── 通知の確認（設定画面から使う） ───────────────────────
+    /** 通知が出せる状態かを返す */
+    @PluginMethod
+    public void checkNotifications(PluginCall call) {
+        call.resolve(notificationStatus());
+    }
+
+    /** 通知の許可を求める。すでに断られていてダイアログが出ないときは、canAsk=false を返す */
+    @PluginMethod
+    public void requestNotifications(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && getPermissionState("notifications") != PermissionState.GRANTED) {
+            requestPermissionForAlias("notifications", call, "requestNotificationsCallback");
+            return;
+        }
+        call.resolve(notificationStatus());
+    }
+
+    @PermissionCallback
+    private void requestNotificationsCallback(PluginCall call) {
+        call.resolve(notificationStatus());
+    }
+
+    /** このアプリの通知設定の画面を開く（一度断った通知を許可し直すとき用） */
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        Context ctx = getContext();
+        Intent i;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            i.putExtra(Settings.EXTRA_APP_PACKAGE, ctx.getPackageName());
+        } else {
+            i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            i.setData(android.net.Uri.parse("package:" + ctx.getPackageName()));
+        }
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            ctx.startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("通知の設定画面を開けませんでした");
+        }
+    }
+
+    /** テスト通知を出す */
+    @PluginMethod
+    public void testNotification(PluginCall call) {
+        Context ctx = getContext();
+        if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) {
+            call.resolve(notificationStatus());
+            return;
+        }
+        ensureChannel();
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_timer)
+            .setContentTitle("Daily Flow")
+            .setContentText("通知は正しく届いています")
+            .setAutoCancel(true)
+            .setColor(0xFFF97316);
+        try {
+            NotificationManagerCompat.from(ctx).notify(TEST_NOTIFICATION_ID, b.build());
+        } catch (SecurityException e) {
+            // 通知が許可されていない
+        }
+        call.resolve(notificationStatus());
+    }
+
+    private JSObject notificationStatus() {
+        Context ctx = getContext();
+        JSObject ret = new JSObject();
+        boolean enabled = NotificationManagerCompat.from(ctx).areNotificationsEnabled();
+        ret.put("enabled", enabled);
+        // 計測中の通知のチャンネルが個別にオフにされていないか
+        boolean channelOn = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+            NotificationChannel ch = nm == null ? null : nm.getNotificationChannel(CHANNEL_ID);
+            if (ch != null) channelOn = ch.getImportance() != NotificationManager.IMPORTANCE_NONE;
+        }
+        ret.put("channelEnabled", channelOn);
+        ret.put("needsRuntimePermission", Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU);
+        ret.put("sdk", Build.VERSION.SDK_INT);
+        ret.put("pinned", isPinned());
+        return ret;
     }
 
     /** 画面が固定されているかを返す（利用者が自分で解除したかを確認できる） */

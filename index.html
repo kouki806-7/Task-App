@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=111">
+    <link rel="stylesheet" href="style.css?v=112">
     <script src="https://accounts.google.com/gsi/client" async></script>
     <!-- クラウド同期（Firebase） -->
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
@@ -156,6 +156,15 @@
                     </span>
                     <input type="checkbox" id="lock-while-timing">
                 </label>
+                <div class="notif-box">
+                    <span class="toggle-title">通知</span>
+                    <p class="sub" id="notif-status">確認中…</p>
+                    <div class="row">
+                        <button type="button" id="btn-notif-allow" class="btn secondary small">通知を許可する</button>
+                        <button type="button" id="btn-notif-test" class="btn secondary small">テスト通知を出す</button>
+                        <button type="button" id="btn-notif-settings" class="btn secondary small">通知の設定を開く</button>
+                    </div>
+                </div>
             </div>
 
             <h3>データ</h3>
@@ -172,6 +181,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=111"></script>
+    <script src="app.js?v=112"></script>
 </body>
 </html>
