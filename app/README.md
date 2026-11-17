@@ -44,5 +44,5 @@ APK の入れ直しが必要なのは、このフォルダ（`app/`）の中を�
 
 - `capacitor.config.json` の `server.url` で Web 版を読み込む。オフラインで読み込めないときは `www/offline.html`
 - 独自プラグイン：`android/app/src/main/java/io/github/kouki8067/dailyflow/FocusPlugin.java`（JS からは `Capacitor.Plugins.Focus.update(...)`）
-- ビルド：`.github/workflows/android.yml`。`app/` を変更して main に push すると APK を作り Releases に置く
+- ビルド：`.github/workflows/android.yml`（GitHub の Actions 画面の「Run workflow」からも手動で実行できる）。`app/` を変更して main に push すると APK を作り Releases に置く
   - 署名鍵は Secrets の `KEYSTORE_BASE64`（.jks を base64 にしたもの）と `KEYSTORE_PASSWORD`。鍵の別名は `dailyflow`
