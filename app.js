@@ -448,10 +448,9 @@
 
     // ── アプリ版: Android から直接 Google の許可をもらう ─────────────
     // 一度許可すれば、次からは画面を出さずにアクセストークンがもらえる（＝開いた時点で自動ログイン）
-    const NATIVE_SCOPES = [
-        'openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile',
-        CAL_READ_SCOPE, CAL_WRITE_SCOPE, TASKS_SCOPE
-    ];
+    // カレンダー・ToDo 用と、端末間同期のログイン用（メールアドレス・名前）
+    const NATIVE_API_SCOPES = [CAL_READ_SCOPE, CAL_WRITE_SCOPE, TASKS_SCOPE];
+    const NATIVE_LOGIN_SCOPES = ['https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile'];
     function googleAuthPlugin() {
         if (!isNativeApp()) return null;
         const P = Capacitor.Plugins && Capacitor.Plugins.GoogleAuth;
@@ -467,8 +466,26 @@
             const e = new Error('この機能を使うには、アプリを新しい版に更新してください'); e.code = 'OLD_APP'; throw e;
         }
         let r;
-        try { r = await G.authorize({ scopes: NATIVE_SCOPES, interactive }); }
-        catch (e) {
+        // まずはカレンダー・ToDo とログイン用をまとめて頼み、Google の内部エラーになったら
+        // カレンダー・ToDo だけで頼み直す（組み合わせによって失敗する端末があるため）
+        const sets = state.settings.nativeScopeMode === 'api'
+            ? [NATIVE_API_SCOPES]
+            : [[...NATIVE_API_SCOPES, ...NATIVE_LOGIN_SCOPES], NATIVE_API_SCOPES];
+        let lastErr = null;
+        for (const scopes of sets) {
+            try {
+                r = await G.authorize({ scopes, interactive });
+                if (scopes === NATIVE_API_SCOPES && sets.length > 1) { state.settings.nativeScopeMode = 'api'; save(); }
+                lastErr = null;
+                break;
+            } catch (e) {
+                lastErr = e;
+                const code = e.code || (e.data && e.data.code) || '';
+                if (!/コード 8/.test(e.message || '') || code === 'NEEDS_CONSENT' || code === 'CANCELED') break;
+            }
+        }
+        if (lastErr) {
+            const e = lastErr;
             const code = e.code || (e.data && e.data.code) || '';
             const err = new Error(code === 'DEVELOPER_ERROR'
                 ? 'Google Cloud にアプリ（パッケージ名とSHA-1）が登録されていません。設定手順を確認してください'
@@ -477,12 +494,29 @@
             err.code = code;
             throw err;
         }
+        if (!r) throw new Error('Google の許可を受け取れませんでした');
         token = { access_token: r.accessToken, scope: (r.grantedScopes || []).join(' '),
             // Android からは有効期限が返らないので、余裕をもって50分で取り直す
             expires_at: Date.now() + 50 * 60000 };
         try { localStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch (e) { /* ignore */ }
         if (!state.settings.nativeGoogle) { state.settings.nativeGoogle = true; save(); }
         return token;
+    }
+
+    // 端末間同期のログイン用のトークン（メールアドレスの権限が必要）。カレンダー用のトークンに含まれていなければ別に頼む
+    async function nativeLoginToken(interactive) {
+        if (tokenValid() && hasScope(NATIVE_LOGIN_SCOPES[0])) return token.access_token;
+        if (state.settings.nativeScopeMode !== 'api') {
+            const t = await nativeAuthorize(interactive);
+            if (hasScope(NATIVE_LOGIN_SCOPES[0])) return t.access_token;
+        }
+        const G = googleAuthPlugin();
+        try {
+            const r = await G.authorize({ scopes: NATIVE_LOGIN_SCOPES, interactive });
+            return r.accessToken;
+        } catch (e) {
+            throw new Error(e.message || 'ログイン用の許可を受け取れませんでした');
+        }
     }
 
     function connect(prompt = '') {
@@ -941,8 +975,8 @@
         if (isNativeApp()) {
             // アプリ版: Android からもらったアクセストークンで Firebase にログインする
             try {
-                if (!tokenValid() || !hasScope('https://www.googleapis.com/auth/userinfo.email')) await nativeAuthorize(true);
-                const cred = firebase.auth.GoogleAuthProvider.credential(null, token.access_token);
+                const at = await nativeLoginToken(true);
+                const cred = firebase.auth.GoogleAuthProvider.credential(null, at);
                 await auth.signInWithCredential(cred);
                 state.settings.cloudAutoLogin = true; save();
                 toast('端末間同期にログインしました');
@@ -1708,8 +1742,8 @@
     if (isNativeApp() && state.settings.nativeGoogle) {
         setTimeout(() => {
             if (auth && !currentUser && state.settings.cloudAutoLogin !== false) {
-                nativeAuthorize(false)
-                    .then(t => auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(null, t.access_token)))
+                nativeLoginToken(false)
+                    .then(at => auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(null, at)))
                     .catch(e => console.warn('[cloud] auto login', e));
             }
         }, 2500);
