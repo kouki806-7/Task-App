@@ -1223,7 +1223,9 @@
         const sig = JSON.stringify([!!data.enabled, items.map(m => [m.pkg, m.title, m.artist, !!m.playing, !!m.active, !!m.canPrev, !!m.canNext])]);
         if (sig === lastMediaSig) return;
         lastMediaSig = sig;
-        nativeMedia = { enabled: !!data.enabled, items };
+        // 1.0.13 以前のアプリは止まっている音楽アプリを返さない（active が無い）
+        const old = items.length > 0 && items.every(m => m.active === undefined);
+        nativeMedia = { enabled: !!data.enabled, items: items.map(m => old ? { ...m, active: true } : m), old };
         renderNowBar();
     }
     async function refreshMedia() {
@@ -1280,7 +1282,9 @@
     }
     function mediaHtml() {
         if (!isNativeApp() || !nativeMedia.items.length) return '';
-        return `<div class="now-media">${nativeMedia.items.map(m => {
+        const oldNote = nativeMedia.old
+            ? `<div class="nm-note">止まっている音楽アプリも表示して ▶ で再生するには、アプリ本体を最新版（1.0.14 以降）に更新してください</div>` : '';
+        return `<div class="now-media">${oldNote}${nativeMedia.items.map(m => {
             const starting = !!mediaStarting[m.pkg];
             const status = starting ? '・起動中…' : !m.active ? '・停止中' : m.playing ? '' : '・一時停止中';
             const title = m.active && m.title
