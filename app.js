@@ -481,13 +481,17 @@
             } catch (e) {
                 lastErr = e;
                 const code = e.code || (e.data && e.data.code) || '';
-                if (!/コード 8/.test(e.message || '') || code === 'NEEDS_CONSENT' || code === 'CANCELED') break;
+                if (!/コード 8/.test(e.message || '') || /UNREGISTERED_ON_API_CONSOLE/.test(e.message || '')
+                    || code === 'NEEDS_CONSENT' || code === 'CANCELED') break;
             }
         }
         if (lastErr) {
             const e = lastErr;
             const code = e.code || (e.data && e.data.code) || '';
-            const err = new Error(code === 'DEVELOPER_ERROR'
+            const unregistered = /UNREGISTERED_ON_API_CONSOLE/.test(e.message || '');
+            const err = new Error(unregistered
+                ? 'Google Cloud に Android のクライアント（パッケージ名 io.github.kouki8067.dailyflow と SHA-1）が登録されていません。Google Auth Platform →「クライアント」で Android のクライアントを作成してください（反映まで数分かかります）'
+                : code === 'DEVELOPER_ERROR'
                 ? 'Google Cloud にアプリ（パッケージ名とSHA-1）が登録されていません。設定手順を確認してください'
                 : code === 'NEEDS_CONSENT' ? 'Google の許可が必要です'
                 : (e.message || 'Google の許可を受け取れませんでした'));
