@@ -763,7 +763,21 @@
     async function pushRecords() {
         const recs = pendingRecords();
         if (!recs.length) return 0;
-        const calId = await ensureRecordCalendar();
+        try {
+            return await pushRecordsTo(recs, await ensureRecordCalendar());
+        } catch (e) {
+            // 登録先のカレンダーが、別のアプリ（ブラウザ版・別の Google 連携）で作られたものだと、
+            // 読めても書き込めず 404 / 403 になる。このアプリで作り直して、もう一度だけ登録する。
+            if (e.status !== 404 && e.status !== 403) throw e;
+            if (e.status === 403 && /SCOPE_INSUFFICIENT|insufficient/i.test(`${e.reason} ${e.apiMessage}`)) throw e;
+            console.warn('[push] 登録先カレンダーに書き込めないので作り直します', e);
+            state.settings.gsync.calendarId = null;
+            save();
+            return await pushRecordsTo(pendingRecords(), await ensureRecordCalendar());
+        }
+    }
+
+    async function pushRecordsTo(recs, calId) {
         const base = `${CAL_API}/calendars/${encodeURIComponent(calId)}/events`;
         let n = 0;
         for (const rec of recs) {
