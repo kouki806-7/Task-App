@@ -1,6 +1,19 @@
 package io.github.kouki8067.dailyflow;
 
+import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.KeyguardManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ComponentName;
+import android.content.Context;
+import android.media.AudioManager;
+import android.net.Uri;
+import android.os.Build;
+import android.provider.Settings;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -74,6 +87,16 @@ public class MediaPlugin extends Plugin {
     public void load() {
         msm = (MediaSessionManager) getContext().getSystemService(android.content.Context.MEDIA_SESSION_SERVICE);
         main.post(this::ensureRegistered);
+    }
+
+    private volatile long lastResumed = 0;
+    private static final int RETURN_NOTIFICATION_ID = 2002;
+    private static final String RETURN_CHANNEL = "return";
+
+    @Override
+    protected void handleOnResume() {
+        lastResumed = SystemClock.elapsedRealtime();
+        try { NotificationManagerCompat.from(getContext()).cancel(RETURN_NOTIFICATION_ID); } catch (Exception ignored) { }
     }
 
     @Override
@@ -355,6 +378,174 @@ public class MediaPlugin extends Plugin {
             else call.reject("再生を始められませんでした");
         } catch (Exception e) {
             call.reject("再生を始められませんでした");
+        }
+    }
+
+    // ════════════════════════════════════════════════════════
+    // 止まっているアプリを再生する（固定を一瞬外す → アプリを開いて再生 → Daily Flow に戻る）
+    // Android 12 以降は、裏にいる音楽アプリをほかのアプリから起こせないため、いったん前に出す。
+    // ════════════════════════════════════════════════════════
+
+    /** 固定を解除したときに画面がロックされる設定か（true / false / 不明は null） */
+    @PluginMethod
+    public void getUnpinLock(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
+        JSObject ret = new JSObject();
+        Boolean locks = null;
+        try {
+            locks = Settings.Secure.getInt(getContext().getContentResolver(), "lock_to_app_exit_locked") != 0;
+        } catch (Settings.SettingNotFoundException e) {
+            // 未設定のときは「画面ロックを使っていればロックする」のが Android の既定
+            KeyguardManager km = (KeyguardManager) getContext().getSystemService(Context.KEYGUARD_SERVICE);
+            locks = km != null && km.isDeviceSecure();
+        } catch (Exception e) {
+            locks = null;
+        }
+        if (locks == null) ret.put("locks", JSObject.NULL); else ret.put("locks", locks);
+        ret.put("canReturn", canReturnByItself());
+        call.resolve(ret);
+    }
+
+    /** 「ほかのアプリの上に重ねて表示」が許可されていれば、確実に自分で戻ってこられる */
+    private boolean canReturnByItself() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || Settings.canDrawOverlays(getContext());
+    }
+
+    @PluginMethod
+    public void openOverlaySettings(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
+        try {
+            Intent i = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getContext().getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("設定画面を開けませんでした");
+        }
+    }
+
+    @PluginMethod
+    public void launchAndPlay(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
+        String pkg = call.getString("pkg", "");
+        if (!PKGS.contains(pkg)) { call.reject("このアプリは操作できません"); return; }
+        Intent launch = getContext().getPackageManager().getLaunchIntentForPackage(pkg);
+        if (launch == null) { call.reject("アプリが見つかりません"); return; }
+        Activity act = getActivity();
+        if (act == null) { call.reject("画面がありません"); return; }
+        main.post(() -> {
+            // 1) 固定を外す
+            try { if (isPinned()) act.stopLockTask(); } catch (Exception ignored) { }
+            waitUnpinned(pkg, launch, call, 0);
+        });
+    }
+
+    private boolean isPinned() {
+        ActivityManager am = (ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
+        return am != null && am.getLockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE;
+    }
+
+    private void waitUnpinned(String pkg, Intent launch, PluginCall call, int tries) {
+        if (isPinned() && tries < 15) {
+            main.postDelayed(() -> waitUnpinned(pkg, launch, call, tries + 1), 100);
+            return;
+        }
+        // 2) 音楽アプリを開く
+        try {
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(launch);
+        } catch (Exception e) {
+            call.reject("アプリを開けませんでした");
+            return;
+        }
+        long start = SystemClock.elapsedRealtime();
+        main.postDelayed(() -> tryPlay(pkg, call, start, 0, 0), 700);
+    }
+
+    // 3) 再生が始まるまで、少しずつ間をあけて再生を指示する（最大 12 秒）
+    private void tryPlay(String pkg, PluginCall call, long start, long lastSent, int sent) {
+        long now = SystemClock.elapsedRealtime();
+        MediaController target = null;
+        for (MediaController c : controllers()) {
+            if (c.getPackageName().equals(pkg)) { target = c; break; }
+        }
+        if (target != null && isPlaying(target.getPlaybackState())) {
+            main.postDelayed(() -> comeBack(call, true), 600);
+            return;
+        }
+        if (now - start > 12000) { comeBack(call, false); return; }
+        if (now - lastSent > 1500) {
+            try {
+                if (target != null && sent < 3) {
+                    target.getTransportControls().play();
+                } else if (now - start > 3000) {
+                    // 再生の窓口が見つからないときは、再生ボタンの信号を送る（前に出ているアプリに届く）
+                    AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                    long t = SystemClock.uptimeMillis();
+                    am.dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY, 0));
+                    am.dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY, 0));
+                }
+            } catch (Exception ignored) { }
+            final int nextSent = sent + 1;
+            final long sentAt = now;
+            main.postDelayed(() -> tryPlay(pkg, call, start, sentAt, nextSent), 300);
+            return;
+        }
+        main.postDelayed(() -> tryPlay(pkg, call, start, lastSent, sent), 300);
+    }
+
+    // 4) Daily Flow に戻る（戻れなかったときは「タップで戻る」通知を出す）
+    private void comeBack(PluginCall call, boolean playing) {
+        Activity act = getActivity();
+        long asked = SystemClock.elapsedRealtime();
+        try {
+            Intent back = new Intent(getContext(), MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            getContext().startActivity(back);
+        } catch (Exception ignored) { }
+        try {
+            ActivityManager am = (ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
+            if (am != null && act != null) am.moveTaskToFront(act.getTaskId(), 0);
+        } catch (Exception ignored) { }
+        main.postDelayed(() -> {
+            boolean returned = lastResumed >= asked;
+            if (!returned) postReturnNotification(playing);
+            JSObject r = new JSObject();
+            r.put("playing", playing);
+            r.put("returned", returned);
+            call.resolve(r);
+        }, 1500);
+    }
+
+    private void postReturnNotification(boolean playing) {
+        Context ctx = getContext();
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+                if (nm != null && nm.getNotificationChannel(RETURN_CHANNEL) == null) {
+                    NotificationChannel ch = new NotificationChannel(RETURN_CHANNEL, "Daily Flow に戻る", NotificationManager.IMPORTANCE_HIGH);
+                    ch.setDescription("音楽アプリを開いたあと、計測中の画面に戻るための通知");
+                    nm.createNotificationChannel(ch);
+                }
+            }
+            Intent back = new Intent(ctx, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            PendingIntent pi = PendingIntent.getActivity(ctx, 0, back,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, RETURN_CHANNEL)
+                .setSmallIcon(R.drawable.ic_stat_timer)
+                .setContentTitle(playing ? "音楽を再生しました" : "Daily Flow に戻る")
+                .setContentText("タップすると計測中の画面に戻ります")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .setAutoCancel(true)
+                .setTimeoutAfter(60000)
+                .setColor(0xFFF97316)
+                .setContentIntent(pi);
+            NotificationManagerCompat.from(ctx).notify(RETURN_NOTIFICATION_ID, b.build());
+        } catch (SecurityException ignored) {
+            // 通知が許可されていない
         }
     }
 }

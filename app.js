@@ -1245,10 +1245,57 @@
         document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshMedia(); });
     }
     const mediaStarting = {};   // 裏で再生を始めている途中のアプリ（pkg → 開始時刻）
+    let mediaLaunching = 0;     // 音楽アプリを開きに行っている間（固定が外れても一時停止しない）
+    let mediaReturnHint = false;
+
+    // 止まっているアプリ: 固定を一瞬外して開き、再生してから戻ってくる（計測は続ける）
+    async function launchMusic(m) {
+        const M = mediaPlugin();
+        if (mediaStarting[m.pkg] || mediaLaunching) return;
+        let info = {};
+        try { info = await M.getUnpinLock(); } catch (e) { /* ignore */ }
+        if (state.timer.isRunning && info.locks === true && !confirm(
+            '固定を外すと画面がロックされる設定になっています。このまま続けるとロック画面に移ります（解除すると音楽アプリが開き、そのあと Daily Flow に戻ります）。\n\n' +
+            'ロックされないようにするには、スマホの設定で「固定」を検索し、「固定を解除する前に PIN の入力を求める」をオフにしてください。\n\n続けますか？')) return;
+        mediaStarting[m.pkg] = Date.now();
+        mediaLaunching = Date.now();
+        lastMediaSig = ''; renderNowBar();
+        let r = null;
+        try { r = await M.launchAndPlay({ pkg: m.pkg }); }
+        catch (e) { toast(e && e.message ? e.message : `${m.app} を開けませんでした`); }
+        delete mediaStarting[m.pkg];
+        if (r && !r.returned) {
+            // 自分では戻れなかった（通知から戻ってきたときに固定し直す）
+            mediaReturnHint = !info.canReturn;
+            if (document.visibilityState === 'visible') finishMusicLaunch(r);
+            else pendingMusicResult = r;
+            return;
+        }
+        finishMusicLaunch(r);
+    }
+    let pendingMusicResult = null;
+    function finishMusicLaunch(r) {
+        mediaLaunching = 0;
+        pendingMusicResult = null;
+        // 計測中なら固定し直す（「アプリを固定しますか？」の確認がもう一度出る）
+        if (state.timer.isRunning) { nativeSig = ''; nativeWasRunning = false; syncNative(); }
+        lastMediaSig = ''; refreshMedia(); renderNowBar();
+        if (r && !r.playing) toast('音楽アプリを開きましたが、再生が始まりませんでした。もう一度 ▶ を押すか、計測を一時停止してアプリで再生してください');
+        else if (mediaReturnHint) {
+            mediaReturnHint = false;
+            toast('自動で戻れるようにするには、設定の「音楽アプリ」→「自動で戻れるようにする」で Daily Flow を許可してください');
+        }
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && mediaLaunching && !Object.keys(mediaStarting).length) {
+            finishMusicLaunch(pendingMusicResult);
+        }
+    });
     async function mediaControl(pkg, action) {
         const M = mediaPlugin();
         if (!M || typeof M.control !== 'function') return;
         const m = nativeMedia.items.find(x => x.pkg === pkg);
+        if (m && !m.active && typeof M.launchAndPlay === 'function') { launchMusic(m); return; }
         if (m && !m.active) {
             // 止まっているアプリ: 裏で起動して、前回の続きから再生してもらう
             if (mediaStarting[pkg]) return;
@@ -1289,7 +1336,7 @@
             const status = starting ? '・起動中…' : !m.active ? '・停止中' : m.playing ? '' : '・一時停止中';
             const title = m.active && m.title
                 ? `${esc(m.title)}${m.artist ? ` <span class="nm-artist">— ${esc(m.artist)}</span>` : ''}`
-                : `<span class="nm-artist">${starting ? '再生を始めています' : '▶ で前回の続きを再生'}</span>`;
+                : `<span class="nm-artist">${starting ? 'アプリを開いて再生しています…' : '▶ でアプリを開いて再生（計測は続きます）'}</span>`;
             return `
             <div class="nm-item ${m.active ? '' : 'idle'}">
                 <div class="nm-info">
@@ -1384,6 +1431,8 @@
         const Focus = focusPlugin();
         const t = state.timer;
         if (!Focus || typeof Focus.getState !== 'function' || !t.isRunning) { pinSeen = false; notPinnedSince = 0; return; }
+        // 音楽アプリを開きに行っている間は、固定が外れていても一時停止しない
+        if (mediaLaunching && Date.now() - mediaLaunching < 180000) { pinSeen = false; notPinnedSince = 0; return; }
         try {
             const r = await Focus.getState();
             if (r.pinned) { pinSeen = true; notPinnedSince = 0; return; }
@@ -1800,7 +1849,7 @@
                 ? `接続中${g.calendarId ? `（実績の登録先: 「${REC_CAL_NAME}」）` : ''}`
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
             $('app-settings').hidden = !isNativeApp();
-            if (isNativeApp()) { refreshNotifStatus(); refreshListenerStatus(); }
+            if (isNativeApp()) { refreshNotifStatus(); refreshListenerStatus(); refreshOverlayStatus(); }
             const gas = state.settings.gas || state.settings.gasDraft || {};
             $('gas-key').value = gas.key || '';
             $('gas-url').value = gas.url || '';
@@ -1872,6 +1921,27 @@
                     : '✕ まだ許可されていません。「通知へのアクセスを許可」を押し、Daily Flow をオンにしてください。オンにできない（「制限付き設定」と出る）ときは、「アプリ情報を開く」→ 右上の︙ →「制限付き設定を許可」をしてから、もう一度試してください。';
             } catch (e) { el.textContent = '✕ ' + (e.message || '状態を確認できませんでした'); }
         }
+        async function refreshOverlayStatus() {
+            const M = mediaPlugin();
+            const el = $('overlay-status');
+            if (!M || typeof M.getUnpinLock !== 'function') {
+                el.textContent = 'この機能を使うには、アプリを新しい版に更新してください（Releases から daily-flow.apk を入れ直す）。';
+                $('btn-overlay-allow').hidden = true;
+                return;
+            }
+            try {
+                const r = await M.getUnpinLock();
+                $('btn-overlay-allow').hidden = !!r.canReturn;
+                el.textContent = (r.canReturn
+                    ? '✓ 音楽アプリを開いたあと、自動で Daily Flow に戻ります。'
+                    : '✕ 自動で戻れないことがあります（そのときは「タップで戻る」通知が出ます）。「自動で戻れるようにする」→ Daily Flow をオンにしてください。オンにできないときは、通知へのアクセスと同じく「制限付き設定を許可」をしてから試してください。')
+                    + (r.locks === true ? '\n⚠ 固定を外すと画面がロックされる設定です。スマホの設定で「固定」を検索し、「固定を解除する前に PIN の入力を求める」をオフにすると、ロック画面に移らずに済みます。' : '');
+            } catch (e) { el.textContent = '✕ ' + (e.message || '状態を確認できませんでした'); }
+        }
+        $('btn-overlay-allow').addEventListener('click', async () => {
+            const M = mediaPlugin();
+            try { await M.openOverlaySettings(); } catch (e) { toast(e.message || '設定画面を開けませんでした'); }
+        });
         $('btn-listener-allow').addEventListener('click', async () => {
             const N = notifPlugin();
             try { await N.openAccessSettings(); } catch (e) { toast(e.message || '設定画面を開けませんでした'); }
@@ -1885,7 +1955,7 @@
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && isNativeApp()) {
                 refreshNotifs();
-                if ($('settings-dialog').open) { refreshNotifStatus(); refreshListenerStatus(); }
+                if ($('settings-dialog').open) { refreshNotifStatus(); refreshListenerStatus(); refreshOverlayStatus(); }
             }
         });
 

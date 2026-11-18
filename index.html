@@ -17,7 +17,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=126">
+    <link rel="stylesheet" href="style.css?v=127">
     <!-- クラウド同期（Firebase） -->
     <!-- 外部のCDNではなく、このリポジトリに置いた複製を読む（vendor/README.md） -->
     <script src="vendor/firebase-10.11.0/firebase-app-compat.js"></script>
@@ -163,6 +163,14 @@
                     </div>
                 </div>
                 <div class="notif-box">
+                    <span class="toggle-title">音楽アプリ（Spotify・Amazon Music）</span>
+                    <p class="sub">計測中のバーから再生・一時停止・曲送りができます。止まっているアプリの ▶ を押すと、固定を一瞬外してそのアプリを開き、再生を始めてから Daily Flow に戻って固定し直します（計測は続きます）。</p>
+                    <p class="sub" id="overlay-status">確認中…</p>
+                    <div class="row">
+                        <button type="button" id="btn-overlay-allow" class="btn secondary small">自動で戻れるようにする</button>
+                    </div>
+                </div>
+                <div class="notif-box">
                     <span class="toggle-title">通知</span>
                     <p class="sub" id="notif-status">確認中…</p>
                     <div class="row">
@@ -197,6 +205,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=125"></script>
+    <script src="app.js?v=126"></script>
 </body>
 </html>

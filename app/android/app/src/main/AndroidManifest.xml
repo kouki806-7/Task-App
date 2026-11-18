@@ -56,4 +56,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 通知元のアプリ名を表示するため（自分用のアプリなので全アプリの名前を参照する） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- 音楽アプリを開いたあと、自分で計測中の画面に戻ってくるため -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 </manifest>

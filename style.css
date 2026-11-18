@@ -373,3 +373,4 @@ dialog { box-sizing: border-box; max-width: calc(100vw - 20px); overflow-x: hidd
 .settings { min-width: 0; }
 .notifs-list .n-title, .notifs-list .n-head, .now-notif .nn-text { overflow-wrap: anywhere; }
 .notifs-list .n-head span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#overlay-status { white-space: pre-line; }
