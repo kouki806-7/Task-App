@@ -275,8 +275,9 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 @media (max-width: 520px) {
     .top { flex-direction: column; gap: 10px; }
     .top h1 { white-space: nowrap; }
-    .top-right { width: 100%; gap: 6px; }
-    .top-right .icon-btn { margin-left: auto; width: 36px; height: 36px; }
+    .top-right { width: 100%; gap: 6px; justify-content: flex-end; }
+    .top-right .icon-btn { width: 36px; height: 36px; }
+    .top-right .cloud-status { margin-right: auto; }
     .routine-list li { flex-wrap: wrap; row-gap: 4px; }
     .routine-list .r-name { flex-basis: calc(100% - 140px); }
     .r-status { min-width: 0; flex: 1; justify-content: flex-start; padding-left: 52px; }
@@ -318,15 +319,28 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .now-notif .nn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-notif .nn-act { color: var(--primary); font-weight: 600; white-space: nowrap; font-size: 0.78rem; }
 .notifs-list { list-style: none; display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
-.notifs-list li button {
-    width: 100%; text-align: left; padding: 10px 12px; border-radius: var(--r-md); cursor: pointer;
-    background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border); color: var(--text);
+.n-item { border-radius: var(--r-md); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border); }
+.n-item.new { border-color: rgba(249, 115, 22, 0.5); }
+.n-item .n-main {
+    width: 100%; text-align: left; padding: 10px 12px; cursor: pointer; background: none; border: none; color: var(--text);
     display: flex; flex-direction: column; gap: 2px;
 }
 .notifs-list .n-head { display: flex; justify-content: space-between; gap: 8px; font-size: 0.75rem; color: var(--muted); }
 .notifs-list .n-title { font-weight: 600; font-size: 0.92rem; }
-.notifs-list .n-text { font-size: 0.85rem; color: #d4d4d8; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-.notifs-list li.new button { border-color: rgba(249, 115, 22, 0.5); }
+/* 閉じているときは2行まで、開くと全文 */
+.notifs-list .n-text { font-size: 0.85rem; color: #d4d4d8; white-space: pre-wrap; overflow-wrap: anywhere;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.n-item.open .n-text { display: block; -webkit-line-clamp: unset; }
+.n-item .n-open { margin: 0 12px 10px; }
+/* 計測中バーの中の一覧 */
+.now-notifs { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.12); }
+.nn-bar { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; font-weight: 600; margin-bottom: 8px; }
+.nn-new { margin-left: 8px; font-size: 0.72rem; color: var(--primary); font-weight: 700; }
+.notifs-list.compact { max-height: 46vh; gap: 6px; }
+.notifs-list.compact .n-item { background: rgba(0, 0, 0, 0.25); }
+.notifs-list.compact .n-main { padding: 8px 10px; }
+.notifs-list.compact .n-title { font-size: 0.88rem; }
+.notifs-list.compact .n-item:not(.open) .n-text { -webkit-line-clamp: 1; }
 .icon-btn[hidden] { display: none; }
 
 /* 予定の名前・通知の本文などが長くても、画面からはみ出さない */

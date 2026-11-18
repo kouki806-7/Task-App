@@ -1172,8 +1172,13 @@
     let notifSeenAt = Number(localStorage.getItem(NOTIF_SEEN_KEY) || 0);
     const unreadNotifs = () => nativeNotifs.items.filter(n => n.time > notifSeenAt);
 
+    let lastNotifSig = '';
     function applyNotifs(data) {
         if (!data) return;
+        // 5秒ごとの確認で中身が変わっていなければ描き直さない（一覧のスクロール位置を保つ）
+        const sig = JSON.stringify([!!data.enabled, !!data.connected, (data.items || []).map(n => [n.key, n.time, n.title, n.text])]);
+        if (sig === lastNotifSig) return;
+        lastNotifSig = sig;
         nativeNotifs = { enabled: !!data.enabled, connected: !!data.connected, items: data.items || [] };
         renderBell();
         renderNowBar();
@@ -1211,34 +1216,57 @@
         const h = Math.floor(m / 60);
         return h < 24 ? `${h}時間前` : `${Math.floor(h / 24)}日前`;
     }
-    function renderNotifList() {
-        const items = nativeNotifs.items;
-        $('notifs-sub').textContent = items.length ? 'タップすると通知元のアプリを開きます' : '通知はありません';
-        $('notifs-list').innerHTML = items.map(n => `
-            <li class="${n.time > notifSeenAt ? 'new' : ''}"><button type="button" data-act="notif-open" data-key="${esc(n.key)}">
+    // 通知1件の表示。タップで全文を開閉し、全文の下の「アプリで開く」で通知元のアプリへ
+    let expandedNotif = '';
+    function notifItemHtml(n) {
+        const open = expandedNotif === n.key;
+        const openLabel = state.timer.isRunning ? 'アプリで開く（計測を一時停止）' : 'アプリで開く';
+        return `<li class="n-item ${open ? 'open' : ''} ${n.time > notifSeenAt ? 'new' : ''}">
+            <button type="button" class="n-main" data-act="notif-toggle" data-key="${esc(n.key)}" aria-expanded="${open}">
                 <span class="n-head"><span>${esc(n.app)}</span><span>${relTime(n.time)}</span></span>
                 ${n.title ? `<span class="n-title">${esc(n.title)}</span>` : ''}
                 ${n.text ? `<span class="n-text">${esc(n.text)}</span>` : ''}
-            </button></li>`).join('');
+            </button>
+            ${open ? `<button type="button" class="btn secondary small n-open" data-act="notif-open" data-key="${esc(n.key)}">${openLabel}</button>` : ''}
+        </li>`;
     }
-    // 通知を確認する: 計測中なら自動で一時停止（画面の固定も解除される）
-    function openNotifs() {
-        const t = state.timer;
-        if (t.taskId && t.isRunning) {
-            toggleTimer(t.taskId);
-            toast('通知を確認するため、計測を一時停止しました');
-        }
-        renderNotifList();
+    function toggleNotif(key) {
+        expandedNotif = expandedNotif === key ? '' : key;
+        markNotifsSeen();
+        renderNowBar();
+        if ($('notifs-dialog').open) renderNotifList();
+    }
+    function markNotifsSeen() {
         notifSeenAt = Date.now();
         try { localStorage.setItem(NOTIF_SEEN_KEY, String(notifSeenAt)); } catch (e) { /* ignore */ }
-        renderBell(); renderNowBar();
+        renderBell();
+    }
+    function renderNotifList() {
+        const items = nativeNotifs.items;
+        $('notifs-sub').textContent = items.length ? 'タップすると全文を表示します' : '通知はありません';
+        $('notifs-list').innerHTML = items.map(notifItemHtml).join('');
+    }
+    // 通知の一覧を開く（読むだけなら計測は止めない）
+    function openNotifs() {
+        renderNotifList();
+        markNotifsSeen(); renderNowBar();
         $('notifs-dialog').showModal();
     }
+    // 通知元のアプリを開く: 計測中なら一時停止して画面の固定を解除してから開く
     async function openNotification(key) {
         const N = notifPlugin();
         if (!N) return;
-        try { await N.open({ key }); $('notifs-dialog').close(); }
-        catch (e) { toast(e.message || '通知を開けませんでした'); refreshNotifs(); }
+        const t = state.timer;
+        if (t.taskId && t.isRunning) {
+            toggleTimer(t.taskId);
+            toast('通知元のアプリを開くため、計測を一時停止しました');
+            await new Promise(r => setTimeout(r, 700)); // 固定の解除を待つ
+        }
+        try {
+            await N.open({ key });
+            expandedNotif = '';
+            if ($('notifs-dialog').open) $('notifs-dialog').close();
+        } catch (e) { toast(e.message || '通知を開けませんでした'); refreshNotifs(); }
     }
 
     // ── 画面の固定を自分で解除したら、自動で一時停止 ──
@@ -1409,13 +1437,16 @@
         if (!nativeNotifs.connected) {
             return `<div class="now-notif"><span>🔔</span><span class="nn-text">通知の読み取りを準備しています…</span></div>`;
         }
-        const un = unreadNotifs();
-        if (!un.length) return '';
-        const n = un[0];
-        const more = un.length > 1 ? ` ほか${un.length - 1}件` : '';
-        return `<button type="button" class="now-notif" data-act="notifs">
-            <span>🔔</span><span class="nn-text">${esc(n.app)}：${esc(n.title || n.text)}${more}</span>
-            <span class="nn-act">${state.timer.isRunning ? '確認（一時停止）' : '確認'}</span></button>`;
+        // 届いている通知を新しい順に一覧で表示（読むだけなら計測は止まらない）
+        const items = nativeNotifs.items;
+        if (!items.length) return '';
+        const MAX = 5;
+        const un = unreadNotifs().length;
+        return `<div class="now-notifs">
+            <div class="nn-bar"><span>🔔 通知 ${items.length}件${un ? `<span class="nn-new">新着 ${un}</span>` : ''}</span>
+                ${items.length > MAX ? `<button type="button" class="link-btn" data-act="notifs">すべて見る</button>` : ''}</div>
+            <ul class="notifs-list compact">${items.slice(0, MAX).map(notifItemHtml).join('')}</ul>
+        </div>`;
     }
 
     function renderPausedBar() {
@@ -1571,6 +1602,7 @@
                 case 'notif-setup': $('btn-settings').click(); setTimeout(() => { const el = $('listener-status'); if (el) el.scrollIntoView({ block: 'center' }); }, 100); break;
                 case 'close-notifs': $('notifs-dialog').close(); break;
                 case 'notif-open': openNotification(el.dataset.key); break;
+                case 'notif-toggle': toggleNotif(el.dataset.key); break;
                 case 'r-skip': setRoutineSkip(id, true); break;
                 case 'r-unskip': setRoutineSkip(id, false); break;
                 case 'r-remove': rDraft = rDraft.filter(r => r.id !== id); rSelected.delete(id); renderRoutines(); break;
