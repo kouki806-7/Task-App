@@ -2074,6 +2074,15 @@
         });
 
         // 1秒ごと: 計測時間の表示
+        // 曜日の横の時計（秒まで）
+        const pad2 = n => String(n).padStart(2, '0');
+        const tickClock = () => {
+            const d = new Date();
+            $('clock').textContent = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+        };
+        tickClock();
+        setInterval(tickClock, 1000);
+
         setInterval(() => {
             const el = $('now-time');
             if (el) el.textContent = fmtTimer(elapsed());

@@ -17,7 +17,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=127">
+    <link rel="stylesheet" href="style.css?v=128">
     <!-- クラウド同期（Firebase） -->
     <!-- 外部のCDNではなく、このリポジトリに置いた複製を読む（vendor/README.md） -->
     <script src="vendor/firebase-10.11.0/firebase-app-compat.js"></script>
@@ -28,7 +28,7 @@
     <main class="app">
         <header class="top">
             <div>
-                <h1 id="date-display">今日</h1>
+                <h1><span id="date-display">今日</span><span id="clock" class="clock"></span></h1>
                 <p id="progress-text" class="sub"></p>
             </div>
             <div class="top-right">
@@ -205,6 +205,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=126"></script>
+    <script src="app.js?v=127"></script>
 </body>
 </html>
