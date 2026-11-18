@@ -473,7 +473,6 @@
             const err = new Error(code === 'DEVELOPER_ERROR'
                 ? 'Google Cloud にアプリ（パッケージ名とSHA-1）が登録されていません。設定手順を確認してください'
                 : code === 'NEEDS_CONSENT' ? 'Google の許可が必要です'
-                : code === 'CANCELED' ? '許可がキャンセルされました'
                 : (e.message || 'Google の許可を受け取れませんでした'));
             err.code = code;
             throw err;

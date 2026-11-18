@@ -46,17 +46,24 @@ public class GoogleAuthPlugin extends Plugin {
                 PluginCall call = pendingCall;
                 pendingCall = null;
                 if (call == null) return;
-                if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null) {
-                    call.reject("許可がキャンセルされました", "CANCELED");
-                    return;
+                // 結果の中に Google からのエラー理由が入っていることがあるので、まず読み取る
+                if (result.getData() != null) {
+                    try {
+                        AuthorizationResult r = Identity.getAuthorizationClient(getContext())
+                            .getAuthorizationResultFromIntent(result.getData());
+                        if (r.getAccessToken() != null) {
+                            resolveToken(call, r);
+                            return;
+                        }
+                    } catch (ApiException e) {
+                        rejectWithStatus(call, e.getStatusCode(), e.getMessage());
+                        return;
+                    } catch (Exception e) {
+                        // 読み取れなければ下へ
+                    }
                 }
-                try {
-                    AuthorizationResult r = Identity.getAuthorizationClient(getContext())
-                        .getAuthorizationResultFromIntent(result.getData());
-                    resolveToken(call, r);
-                } catch (ApiException e) {
-                    call.reject("許可を受け取れませんでした（" + e.getStatusCode() + "）", "FAILED");
-                }
+                call.reject("許可がキャンセルされました（結果コード " + result.getResultCode()
+                    + (result.getData() == null ? "、詳細なし" : "") + "）", "CANCELED");
             });
     }
 
@@ -100,16 +107,38 @@ public class GoogleAuthPlugin extends Plugin {
                 }
             })
             .addOnFailureListener(e -> {
-                String code = "FAILED";
-                String msg = e.getMessage() == null ? "Google の許可を受け取れませんでした" : e.getMessage();
                 if (e instanceof ApiException) {
-                    int status = ((ApiException) e).getStatusCode();
-                    // 10 = DEVELOPER_ERROR（パッケージ名・SHA-1 が Google Cloud に登録されていない など）
-                    if (status == 10) code = "DEVELOPER_ERROR";
-                    msg = msg + "（" + status + "）";
+                    rejectWithStatus(call, ((ApiException) e).getStatusCode(), e.getMessage());
+                } else {
+                    call.reject(e.getMessage() == null ? "Google の許可を受け取れませんでした" : e.getMessage(), "FAILED");
                 }
-                call.reject(msg, code);
             });
+    }
+
+    /** Google のステータスコードを、原因が分かる言葉にして返す */
+    private void rejectWithStatus(PluginCall call, int status, String raw) {
+        String code = "FAILED";
+        String msg;
+        switch (status) {
+            case 10:
+                code = "DEVELOPER_ERROR";
+                msg = "Google Cloud にこのアプリ（パッケージ名と SHA-1）が登録されていないか、登録内容が違います";
+                break;
+            case 12501:
+            case 16:
+                code = "CANCELED";
+                msg = "許可の画面が閉じられました";
+                break;
+            case 7:
+                msg = "通信できませんでした";
+                break;
+            case 8:
+                msg = "Google 側で一時的なエラーが起きました。少し待って再度お試しください";
+                break;
+            default:
+                msg = "Google の許可を受け取れませんでした";
+        }
+        call.reject(msg + "（コード " + status + (raw == null ? "" : "：" + raw) + "）", code);
     }
 
     private void resolveToken(PluginCall call, AuthorizationResult r) {
