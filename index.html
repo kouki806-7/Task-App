@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=112">
+    <link rel="stylesheet" href="style.css?v=118">
     <script src="https://accounts.google.com/gsi/client" async></script>
     <!-- クラウド同期（Firebase） -->
     <script src="https://www.gstatic.com/firebasejs/10.11.0/firebase-app-compat.js"></script>
@@ -37,6 +37,10 @@
             </div>
             <div class="top-right">
             <button type="button" id="cloud-status" class="cloud-status" title="スマホとPCのデータ同期（Firebase）。Google ToDo・カレンダーの読み込みとは別です"></button>
+            <button type="button" id="btn-notifs" class="icon-btn notif-bell" data-act="notifs" title="ほかのアプリの通知" aria-label="ほかのアプリの通知" hidden>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                <span class="bell-badge" id="bell-badge"></span>
+            </button>
             <button type="button" id="btn-settings" class="icon-btn" title="設定" aria-label="設定">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
             </button>
@@ -157,6 +161,15 @@
                     <input type="checkbox" id="lock-while-timing">
                 </label>
                 <div class="notif-box">
+                    <span class="toggle-title">ほかのアプリの通知（画面の固定中に確認）</span>
+                    <p class="sub">画面の固定中は通知欄を開けないため、届いた通知を Daily Flow の中に表示します。確認するときは計測が自動で一時停止します。通知の内容は端末の中だけで扱い、保存や送信はしません。</p>
+                    <p class="sub" id="listener-status">確認中…</p>
+                    <div class="row">
+                        <button type="button" id="btn-listener-allow" class="btn secondary small">通知へのアクセスを許可</button>
+                        <button type="button" id="btn-listener-appinfo" class="btn secondary small">アプリ情報を開く</button>
+                    </div>
+                </div>
+                <div class="notif-box">
                     <span class="toggle-title">通知</span>
                     <p class="sub" id="notif-status">確認中…</p>
                     <div class="row">
@@ -179,8 +192,18 @@
     </dialog>
 
 
+    <!-- ほかのアプリの通知（アプリ版） -->
+    <dialog id="notifs-dialog">
+        <div class="settings">
+            <h2>通知</h2>
+            <p class="sub" id="notifs-sub"></p>
+            <ul id="notifs-list" class="notifs-list"></ul>
+            <div class="row end"><button type="button" class="btn primary" data-act="close-notifs">閉じる</button></div>
+        </div>
+    </dialog>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=116"></script>
+    <script src="app.js?v=117"></script>
 </body>
 </html>

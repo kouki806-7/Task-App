@@ -1161,6 +1161,100 @@
             .catch(e => console.warn('[focus]', e));
     }
 
+    // ── ほかのアプリの通知（画面の固定中でもアプリ内で確認できるように） ──
+    function notifPlugin() {
+        if (!isNativeApp()) return null;
+        const P = Capacitor.Plugins && Capacitor.Plugins.Notif;
+        if (P) return P;
+        return typeof Capacitor.registerPlugin === 'function' ? Capacitor.registerPlugin('Notif') : null;
+    }
+    const NOTIF_SEEN_KEY = 'daily_flow_notif_seen';
+    let nativeNotifs = { enabled: false, connected: false, items: [] };
+    let notifSeenAt = Number(localStorage.getItem(NOTIF_SEEN_KEY) || 0);
+    const unreadNotifs = () => nativeNotifs.items.filter(n => n.time > notifSeenAt);
+
+    function applyNotifs(data) {
+        if (!data) return;
+        nativeNotifs = { enabled: !!data.enabled, connected: !!data.connected, items: data.items || [] };
+        renderBell();
+        renderNowBar();
+        if ($('notifs-dialog').open) renderNotifList();
+    }
+    async function refreshNotifs() {
+        const N = notifPlugin();
+        if (!N || typeof N.getNotifications !== 'function') return;
+        try { applyNotifs(await N.getNotifications()); } catch (e) { /* 古い版のアプリ */ }
+    }
+    function initNotifs() {
+        const N = notifPlugin();
+        if (!N || typeof N.getNotifications !== 'function') return;
+        refreshNotifs();
+        try { N.addListener('change', applyNotifs); } catch (e) { console.warn('[notif]', e); }
+    }
+    function renderBell() {
+        const btn = $('btn-notifs');
+        if (!btn) return;
+        btn.hidden = !(isNativeApp() && nativeNotifs.enabled);
+        const n = unreadNotifs().length;
+        const badge = $('bell-badge');
+        badge.textContent = n > 99 ? '99+' : String(n);
+        badge.classList.toggle('on', n > 0);
+    }
+    function relTime(ms) {
+        const m = Math.round((Date.now() - ms) / 60000);
+        if (m < 1) return 'たった今';
+        if (m < 60) return `${m}分前`;
+        const h = Math.floor(m / 60);
+        return h < 24 ? `${h}時間前` : `${Math.floor(h / 24)}日前`;
+    }
+    function renderNotifList() {
+        const items = nativeNotifs.items;
+        $('notifs-sub').textContent = items.length ? 'タップすると通知元のアプリを開きます' : '通知はありません';
+        $('notifs-list').innerHTML = items.map(n => `
+            <li class="${n.time > notifSeenAt ? 'new' : ''}"><button type="button" data-act="notif-open" data-key="${esc(n.key)}">
+                <span class="n-head"><span>${esc(n.app)}</span><span>${relTime(n.time)}</span></span>
+                ${n.title ? `<span class="n-title">${esc(n.title)}</span>` : ''}
+                ${n.text ? `<span class="n-text">${esc(n.text)}</span>` : ''}
+            </button></li>`).join('');
+    }
+    // 通知を確認する: 計測中なら自動で一時停止（画面の固定も解除される）
+    function openNotifs() {
+        const t = state.timer;
+        if (t.taskId && t.isRunning) {
+            toggleTimer(t.taskId);
+            toast('通知を確認するため、計測を一時停止しました');
+        }
+        renderNotifList();
+        notifSeenAt = Date.now();
+        try { localStorage.setItem(NOTIF_SEEN_KEY, String(notifSeenAt)); } catch (e) { /* ignore */ }
+        renderBell(); renderNowBar();
+        $('notifs-dialog').showModal();
+    }
+    async function openNotification(key) {
+        const N = notifPlugin();
+        if (!N) return;
+        try { await N.open({ key }); $('notifs-dialog').close(); }
+        catch (e) { toast(e.message || '通知を開けませんでした'); refreshNotifs(); }
+    }
+
+    // ── 画面の固定を自分で解除したら、自動で一時停止 ──
+    // （固定中は通知欄を開けないので、解除するのはたいてい通知を見るため）
+    let pinSeen = false;
+    setInterval(async () => {
+        const Focus = focusPlugin();
+        const t = state.timer;
+        if (!Focus || typeof Focus.getState !== 'function' || !t.isRunning || state.settings.lockWhileTiming === false) { pinSeen = false; return; }
+        try {
+            const r = await Focus.getState();
+            if (r.pinned) { pinSeen = true; return; }
+            if (pinSeen && state.timer.isRunning) {
+                pinSeen = false;
+                toggleTimer(state.timer.taskId);
+                toast('画面の固定が解除されたので、計測を一時停止しました');
+            }
+        } catch (e) { /* ignore */ }
+    }, 2000);
+
     // ════════════════════════════════════════════════════════
     // 表示
     // ════════════════════════════════════════════════════════
@@ -1284,7 +1378,17 @@
                 <button type="button" class="btn secondary" data-act="timer" data-id="${task.id}">${t.isRunning ? '一時停止' : '再開'}</button>
                 ${t.isRunning ? '' : `<button type="button" class="btn secondary" data-act="discard" data-id="${task.id}">破棄</button>`}
                 <button type="button" class="btn primary" data-act="finish">完了して記録</button>
-            </div>`;
+            </div>${notifPreviewHtml()}`;
+    }
+    function notifPreviewHtml() {
+        if (!isNativeApp() || !nativeNotifs.enabled) return '';
+        const un = unreadNotifs();
+        if (!un.length) return '';
+        const n = un[0];
+        const more = un.length > 1 ? ` ほか${un.length - 1}件` : '';
+        return `<button type="button" class="now-notif" data-act="notifs">
+            <span>🔔</span><span class="nn-text">${esc(n.app)}：${esc(n.title || n.text)}${more}</span>
+            <span class="nn-act">${state.timer.isRunning ? '確認（一時停止）' : '確認'}</span></button>`;
     }
 
     function renderPausedBar() {
@@ -1436,6 +1540,9 @@
                 case 'reconsent': token = null; syncAll({ interactive: 'consent' }); break;
                 case 'cloud-login': cloudLogin(); break;
                 case 'view': showView(el.dataset.view); break;
+                case 'notifs': openNotifs(); break;
+                case 'close-notifs': $('notifs-dialog').close(); break;
+                case 'notif-open': openNotification(el.dataset.key); break;
                 case 'r-skip': setRoutineSkip(id, true); break;
                 case 'r-unskip': setRoutineSkip(id, false); break;
                 case 'r-remove': rDraft = rDraft.filter(r => r.id !== id); rSelected.delete(id); renderRoutines(); break;
@@ -1527,7 +1634,7 @@
                 ? `接続中${g.calendarId ? `（実績の登録先: 「${REC_CAL_NAME}」）` : ''}`
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
             $('app-settings').hidden = !isNativeApp();
-            if (isNativeApp()) refreshNotifStatus();
+            if (isNativeApp()) { refreshNotifStatus(); refreshListenerStatus(); }
             $('lock-while-timing').checked = state.settings.lockWhileTiming !== false;
             const gas = state.settings.gas || state.settings.gasDraft || {};
             $('gas-key').value = gas.key || '';
@@ -1584,9 +1691,37 @@
         $('btn-notif-settings').addEventListener('click', async () => {
             try { await notifCall('openNotificationSettings'); } catch (e) { notifError(e); }
         });
+        // ほかのアプリの通知を読み取る許可
+        async function refreshListenerStatus() {
+            const N = notifPlugin();
+            const el = $('listener-status');
+            if (!N || typeof N.getNotifications !== 'function') {
+                el.textContent = 'この機能を使うには、アプリを新しい版に更新してください（Releases から daily-flow.apk を入れ直す）。';
+                return;
+            }
+            try {
+                const r = await N.getNotifications();
+                applyNotifs(r);
+                el.textContent = r.enabled
+                    ? `✓ 許可されています（今ある通知 ${r.items.length} 件）`
+                    : '✕ まだ許可されていません。「通知へのアクセスを許可」を押し、Daily Flow をオンにしてください。オンにできない（「制限付き設定」と出る）ときは、「アプリ情報を開く」→ 右上の︙ →「制限付き設定を許可」をしてから、もう一度試してください。';
+            } catch (e) { el.textContent = '✕ ' + (e.message || '状態を確認できませんでした'); }
+        }
+        $('btn-listener-allow').addEventListener('click', async () => {
+            const N = notifPlugin();
+            try { await N.openAccessSettings(); } catch (e) { toast(e.message || '設定画面を開けませんでした'); }
+        });
+        $('btn-listener-appinfo').addEventListener('click', async () => {
+            const N = notifPlugin();
+            try { await N.openAppInfo(); } catch (e) { toast(e.message || 'アプリ情報を開けませんでした'); }
+        });
+
         // 通知の設定画面から戻ってきたら、状態を確認し直す
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && isNativeApp() && $('settings-dialog').open) refreshNotifStatus();
+            if (document.visibilityState === 'visible' && isNativeApp()) {
+                refreshNotifs();
+                if ($('settings-dialog').open) { refreshNotifStatus(); refreshListenerStatus(); }
+            }
         });
 
         $('lock-while-timing').addEventListener('change', e => {
@@ -1740,6 +1875,7 @@
     render();
     initFirebase();
     renderCloud();
+    initNotifs();
     // 中継スクリプトがあれば、開いた時点で自動で読み込む（ログイン不要）
     if (googleReady()) setTimeout(() => syncAll(), 300);
     // アプリ版: 端末間同期にまだログインしていなければ、Google の許可を使って自動でログインする
@@ -1757,5 +1893,5 @@
     setInterval(armAutoConnect, 30000);
 
     // テスト用
-    window.__df = { nativeSig: () => nativeSig, state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
+    window.__df = { notifs: () => nativeNotifs, nativeSig: () => nativeSig, state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };
 })();
