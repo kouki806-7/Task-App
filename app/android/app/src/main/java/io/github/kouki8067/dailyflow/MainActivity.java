@@ -8,6 +8,8 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // 画面の固定・計測中の通知を行う独自プラグインを登録（super.onCreate より前に呼ぶ）
         registerPlugin(FocusPlugin.class);
+        // Google の許可（カレンダー・ToDo・端末間同期のログイン）
+        registerPlugin(GoogleAuthPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
