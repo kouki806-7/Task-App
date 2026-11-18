@@ -335,7 +335,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .n-item .n-open { margin: 0 12px 10px; }
 /* 計測中バーの中の一覧 */
 .now-media { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.12); display: grid; gap: 8px; }
-.nm-item { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.nm-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .nm-info { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .nm-app { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nm-title { font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -343,6 +343,12 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .nm-note { font-size: 0.75rem; color: var(--muted); }
 .nm-item.idle .nm-title { font-size: 0.8rem; }
 .nm-btns { display: flex; gap: 6px; flex-shrink: 0; }
+.nm-modes { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
+.nm-mode {
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    border-radius: 999px; padding: 3px 9px; font-size: 0.72rem; cursor: pointer; white-space: nowrap;
+}
+.nm-mode.on { color: var(--primary); border-color: rgba(249, 115, 22, 0.5); background: var(--primary-soft); }
 .nm-btn {
     width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.06); color: inherit; font-size: 1rem; cursor: pointer;

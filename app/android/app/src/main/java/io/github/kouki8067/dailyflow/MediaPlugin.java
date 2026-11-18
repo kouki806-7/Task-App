@@ -13,6 +13,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import androidx.core.app.NotificationCompat;
+import android.support.v4.media.session.MediaControllerCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.core.app.NotificationManagerCompat;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -68,6 +71,43 @@ public class MediaPlugin extends Plugin {
     private MediaSessionManager msm;
     private boolean registered = false;
     private final List<MediaController> watched = new ArrayList<>();
+
+    /** リピート・シャッフルの状態を読むための互換コントローラ（アプリごと） */
+    private final java.util.Map<String, MediaControllerCompat> compat = new java.util.HashMap<>();
+    private final MediaControllerCompat.Callback compatCb = new MediaControllerCompat.Callback() {
+        @Override public void onRepeatModeChanged(int repeatMode) { changed(); }
+        @Override public void onShuffleModeChanged(int shuffleMode) { changed(); }
+        @Override public void onSessionReady() { changed(); }
+    };
+
+    private synchronized MediaControllerCompat compatFor(MediaController c) {
+        String pkg = c.getPackageName();
+        MediaControllerCompat cc = compat.get(pkg);
+        try {
+            if (cc != null && cc.getSessionToken().getToken().equals(c.getSessionToken())) return cc;
+        } catch (Exception ignored) { }
+        if (cc != null) { try { cc.unregisterCallback(compatCb); } catch (Exception ignored) { } }
+        try {
+            cc = new MediaControllerCompat(getContext(), MediaSessionCompat.Token.fromToken(c.getSessionToken()));
+            cc.registerCallback(compatCb, main);
+            compat.put(pkg, cc);
+            return cc;
+        } catch (Exception e) {
+            compat.remove(pkg);
+            return null;
+        }
+    }
+
+    /** アプリ独自の「リピート」「シャッフル」ボタン（Spotify などが Android Auto 向けに出しているもの） */
+    private static PlaybackState.CustomAction findCustom(PlaybackState s, String en, String ja) {
+        if (s == null || s.getCustomActions() == null) return null;
+        for (PlaybackState.CustomAction ca : s.getCustomActions()) {
+            String id = String.valueOf(ca.getAction()).toLowerCase(java.util.Locale.ROOT);
+            String nm = String.valueOf(ca.getName()).toLowerCase(java.util.Locale.ROOT);
+            if (id.contains(en) || nm.contains(en) || nm.contains(ja)) return ca;
+        }
+        return null;
+    }
 
     private final MediaController.Callback cb = new MediaController.Callback() {
         @Override public void onPlaybackStateChanged(PlaybackState state) { changed(); }
@@ -133,6 +173,7 @@ public class MediaPlugin extends Plugin {
         for (MediaController c : list) {
             if (!PKGS.contains(c.getPackageName())) continue;
             try { c.registerCallback(cb, main); watched.add(c); } catch (Exception ignored) { }
+            compatFor(c);
         }
     }
 
@@ -210,6 +251,30 @@ public class MediaPlugin extends Plugin {
             // 操作の可否が申告されていないアプリもあるので、0 のときは使える扱いにする
             o.put("canPrev", live && (actions == 0 || (actions & PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0));
             o.put("canNext", live && (actions == 0 || (actions & PlaybackState.ACTION_SKIP_TO_NEXT) != 0));
+            // リピート（off / all / one）とシャッフル。状態が分からないときは null
+            String repeat = null; Boolean shuffle = null;
+            boolean canRepeat = false, canShuffle = false;
+            if (live && c != null) {
+                MediaControllerCompat cc = compatFor(c);
+                int rm = -1, sm = -1;
+                if (cc != null) {
+                    try { rm = cc.getRepeatMode(); } catch (Exception ignored) { }
+                    try { sm = cc.getShuffleMode(); } catch (Exception ignored) { }
+                }
+                if (rm == PlaybackStateCompat.REPEAT_MODE_NONE) repeat = "off";
+                else if (rm == PlaybackStateCompat.REPEAT_MODE_ONE) repeat = "one";
+                else if (rm == PlaybackStateCompat.REPEAT_MODE_ALL || rm == PlaybackStateCompat.REPEAT_MODE_GROUP) repeat = "all";
+                if (sm == PlaybackStateCompat.SHUFFLE_MODE_NONE) shuffle = false;
+                else if (sm == PlaybackStateCompat.SHUFFLE_MODE_ALL || sm == PlaybackStateCompat.SHUFFLE_MODE_GROUP) shuffle = true;
+                canRepeat = repeat != null || (actions & PlaybackStateCompat.ACTION_SET_REPEAT_MODE) != 0
+                    || findCustom(s, "repeat", "リピート") != null;
+                canShuffle = shuffle != null || (actions & PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE) != 0
+                    || findCustom(s, "shuffle", "シャッフル") != null;
+            }
+            o.put("canRepeat", canRepeat);
+            o.put("canShuffle", canShuffle);
+            if (repeat == null) o.put("repeat", JSObject.NULL); else o.put("repeat", repeat);
+            if (shuffle == null) o.put("shuffle", JSObject.NULL); else o.put("shuffle", shuffle);
             items.put(o);
         }
         ret.put("items", items);
@@ -255,6 +320,10 @@ public class MediaPlugin extends Plugin {
                     break;
                 case "next": tc.skipToNext(); break;
                 case "prev": tc.skipToPrevious(); break;
+                case "repeat":
+                case "shuffle":
+                    if (!toggleMode(target, action)) { call.reject("このアプリでは切り替えられません"); return; }
+                    break;
                 default: call.reject("不明な操作です"); return;
             }
         } catch (Exception e) {
@@ -262,6 +331,49 @@ public class MediaPlugin extends Plugin {
             return;
         }
         call.resolve(result("session"));
+    }
+
+    /**
+     * リピート: オフ → 全体 → 1曲 → オフ、シャッフル: オン ⇔ オフ。
+     * 状態が読めるアプリは標準の方法で、読めないアプリはアプリ独自のボタンを押した扱いにする。
+     */
+    private boolean toggleMode(MediaController c, String what) {
+        boolean rep = what.equals("repeat");
+        MediaControllerCompat cc = compatFor(c);
+        int cur = -1;
+        if (cc != null) {
+            try { cur = rep ? cc.getRepeatMode() : cc.getShuffleMode(); } catch (Exception ignored) { }
+        }
+        PlaybackState s = c.getPlaybackState();
+        long actions = s == null ? 0 : s.getActions();
+        boolean std = cc != null && (cur >= 0 || (actions & (rep ? PlaybackStateCompat.ACTION_SET_REPEAT_MODE : PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE)) != 0);
+        if (std && cur >= 0) {
+            try {
+                if (rep) {
+                    int next = cur == PlaybackStateCompat.REPEAT_MODE_NONE ? PlaybackStateCompat.REPEAT_MODE_ALL
+                        : cur == PlaybackStateCompat.REPEAT_MODE_ONE ? PlaybackStateCompat.REPEAT_MODE_NONE
+                        : PlaybackStateCompat.REPEAT_MODE_ONE;
+                    cc.getTransportControls().setRepeatMode(next);
+                } else {
+                    cc.getTransportControls().setShuffleMode(cur == PlaybackStateCompat.SHUFFLE_MODE_NONE
+                        ? PlaybackStateCompat.SHUFFLE_MODE_ALL : PlaybackStateCompat.SHUFFLE_MODE_NONE);
+                }
+                return true;
+            } catch (Exception ignored) { }
+        }
+        PlaybackState.CustomAction ca = rep ? findCustom(s, "repeat", "リピート") : findCustom(s, "shuffle", "シャッフル");
+        if (ca != null) {
+            try { c.getTransportControls().sendCustomAction(ca, null); return true; } catch (Exception ignored) { }
+        }
+        if (std) {
+            // 状態は読めないが切り替えには対応している: 1段進める扱い
+            try {
+                if (rep) cc.getTransportControls().setRepeatMode(PlaybackStateCompat.REPEAT_MODE_ALL);
+                else cc.getTransportControls().setShuffleMode(PlaybackStateCompat.SHUFFLE_MODE_ALL);
+                return true;
+            } catch (Exception ignored) { }
+        }
+        return false;
     }
 
     private static boolean isLive(PlaybackState s) {

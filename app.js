@@ -1220,7 +1220,7 @@
     function applyMedia(data) {
         if (!data) return;
         const items = Array.isArray(data.items) ? data.items : [];
-        const sig = JSON.stringify([!!data.enabled, items.map(m => [m.pkg, m.title, m.artist, !!m.playing, !!m.active, !!m.canPrev, !!m.canNext])]);
+        const sig = JSON.stringify([!!data.enabled, items.map(m => [m.pkg, m.title, m.artist, !!m.playing, !!m.active, !!m.canPrev, !!m.canNext, m.repeat, m.shuffle, !!m.canRepeat, !!m.canShuffle])]);
         if (sig === lastMediaSig) return;
         lastMediaSig = sig;
         // 1.0.13 以前のアプリは止まっている音楽アプリを返さない（active が無い）
@@ -1321,11 +1321,23 @@
             }
             return;
         }
-        // 押した感触を出すため、再生・一時停止はすぐ表示を切り替える
+        // 押した感触を出すため、再生・一時停止・リピート・シャッフルはすぐ表示を切り替える
         if (action === 'toggle' && m) { m.playing = !m.playing; lastMediaSig = ''; renderNowBar(); }
+        if (action === 'repeat' && m && m.repeat) { m.repeat = { off: 'all', all: 'one', one: 'off' }[m.repeat]; lastMediaSig = ''; renderNowBar(); }
+        if (action === 'shuffle' && m && m.shuffle !== null && m.shuffle !== undefined) { m.shuffle = !m.shuffle; lastMediaSig = ''; renderNowBar(); }
         try { await M.control({ pkg, action }); }
         catch (e) { toast(e && e.message ? e.message : '操作できませんでした'); }
         setTimeout(refreshMedia, 500);
+    }
+    // シャッフル（オン・オフ）とリピート（オフ → 全体 → 1曲）
+    function modesHtml(m) {
+        if (!m.active || (!m.canRepeat && !m.canShuffle)) return '';
+        const known = v => v !== null && v !== undefined;
+        const sh = !m.canShuffle ? '' : `<button type="button" class="nm-mode ${m.shuffle === true ? 'on' : ''}" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="shuffle"
+            aria-pressed="${m.shuffle === true}">🔀 シャッフル${known(m.shuffle) ? (m.shuffle ? ' オン' : ' オフ') : ''}</button>`;
+        const rl = m.repeat === 'one' ? '🔂 1曲リピート' : m.repeat === 'all' ? '🔁 全体リピート' : m.repeat === 'off' ? '🔁 リピート オフ' : '🔁 リピート';
+        const rp = !m.canRepeat ? '' : `<button type="button" class="nm-mode ${m.repeat === 'one' || m.repeat === 'all' ? 'on' : ''}" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="repeat">${rl}</button>`;
+        return `<div class="nm-modes">${sh}${rp}</div>`;
     }
     function mediaHtml() {
         if (!isNativeApp() || !nativeMedia.items.length) return '';
@@ -1348,6 +1360,7 @@
                     <button type="button" class="nm-btn main" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="toggle" aria-label="${m.playing ? '一時停止' : '再生'}" ${starting ? 'disabled' : ''}>${m.playing ? '⏸' : '▶'}</button>
                     <button type="button" class="nm-btn" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="next" aria-label="次の曲" ${m.canNext ? '' : 'disabled'}>⏭</button>
                 </div>
+                ${modesHtml(m)}
             </div>`;
         }).join('')}</div>`;
     }
