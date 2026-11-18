@@ -12,6 +12,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GoogleAuthPlugin.class);
         // ほかのアプリの通知をアプリ内に表示
         registerPlugin(NotifPlugin.class);
+        // 音楽アプリ（Spotify・Amazon Music）の再生操作
+        registerPlugin(MediaPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

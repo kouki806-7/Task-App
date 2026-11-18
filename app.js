@@ -1208,6 +1208,68 @@
             if (state.timer.taskId || $('notifs-dialog').open) refreshNotifs();
         }, 5000);
     }
+    // ── 音楽アプリ（Spotify・Amazon Music）の操作。固定中でもアプリを切り替えずに使える ──
+    function mediaPlugin() {
+        if (!isNativeApp()) return null;
+        const P = Capacitor.Plugins && Capacitor.Plugins.Media;
+        if (P) return P;
+        return typeof Capacitor.registerPlugin === 'function' ? Capacitor.registerPlugin('Media') : null;
+    }
+    let nativeMedia = { enabled: false, items: [] };
+    let lastMediaSig = '';
+    function applyMedia(data) {
+        if (!data) return;
+        const items = Array.isArray(data.items) ? data.items : [];
+        const sig = JSON.stringify([!!data.enabled, items.map(m => [m.pkg, m.title, m.artist, !!m.playing, !!m.canPrev, !!m.canNext])]);
+        if (sig === lastMediaSig) return;
+        lastMediaSig = sig;
+        nativeMedia = { enabled: !!data.enabled, items };
+        renderNowBar();
+    }
+    async function refreshMedia() {
+        const M = mediaPlugin();
+        if (!M || typeof M.getMedia !== 'function') return;
+        try { applyMedia(await M.getMedia()); } catch (e) { /* 古い版のアプリ */ }
+    }
+    function initMedia() {
+        const M = mediaPlugin();
+        if (!M || typeof M.getMedia !== 'function') return;
+        refreshMedia();
+        try { M.addListener('change', applyMedia); } catch (e) { console.warn('[media]', e); }
+        // 変化の知らせが届かない場合に備えて、計測中は5秒ごとにも確認する
+        setInterval(() => {
+            if (document.visibilityState === 'visible' && state.timer.taskId) refreshMedia();
+        }, 5000);
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshMedia(); });
+    }
+    async function mediaControl(pkg, action) {
+        const M = mediaPlugin();
+        if (!M || typeof M.control !== 'function') return;
+        // 押した感触を出すため、再生・一時停止はすぐ表示を切り替える
+        if (action === 'toggle') {
+            const m = nativeMedia.items.find(x => x.pkg === pkg);
+            if (m) { m.playing = !m.playing; lastMediaSig = ''; renderNowBar(); }
+        }
+        try { await M.control({ pkg, action }); }
+        catch (e) { toast(e && e.message ? e.message : '操作できませんでした'); }
+        setTimeout(refreshMedia, 500);
+    }
+    function mediaHtml() {
+        if (!isNativeApp() || !nativeMedia.items.length) return '';
+        return `<div class="now-media">${nativeMedia.items.map(m => `
+            <div class="nm-item">
+                <div class="nm-info">
+                    <span class="nm-app">🎵 ${esc(m.app)}${m.playing ? '' : '・停止中'}</span>
+                    <span class="nm-title">${esc(m.title || '再生中の曲')}${m.artist ? ` <span class="nm-artist">— ${esc(m.artist)}</span>` : ''}</span>
+                </div>
+                <div class="nm-btns">
+                    <button type="button" class="nm-btn" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="prev" aria-label="前の曲" ${m.canPrev ? '' : 'disabled'}>⏮</button>
+                    <button type="button" class="nm-btn main" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="toggle" aria-label="${m.playing ? '一時停止' : '再生'}">${m.playing ? '⏸' : '▶'}</button>
+                    <button type="button" class="nm-btn" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="next" aria-label="次の曲" ${m.canNext ? '' : 'disabled'}>⏭</button>
+                </div>
+            </div>`).join('')}</div>`;
+    }
+
     function renderBell() {
         const btn = $('btn-notifs');
         if (!btn) return;
@@ -1430,7 +1492,7 @@
                 <button type="button" class="btn secondary" data-act="timer" data-id="${esc(task.id)}">${t.isRunning ? '一時停止' : '再開'}</button>
                 ${t.isRunning ? '' : `<button type="button" class="btn secondary" data-act="discard" data-id="${esc(task.id)}">破棄</button>`}
                 <button type="button" class="btn primary" data-act="finish">完了して記録</button>
-            </div>${notifPreviewHtml()}`;
+            </div>${mediaHtml()}${notifPreviewHtml()}`;
     }
     function notifPreviewHtml() {
         if (!isNativeApp()) return '';
@@ -1439,7 +1501,7 @@
         if (!nativeNotifs.enabled) {
             // 許可がないと、固定中にほかのアプリの通知を見られないことを知らせる
             return `<button type="button" class="now-notif" data-act="notif-setup">
-                <span>🔔</span><span class="nn-text">固定中にほかのアプリの通知を見るには、通知へのアクセスの許可が必要です</span>
+                <span>🔔</span><span class="nn-text">固定中にほかのアプリの通知を見たり、音楽を操作したりするには、通知へのアクセスの許可が必要です</span>
                 <span class="nn-act">設定</span></button>`;
         }
         if (!nativeNotifs.connected) {
@@ -1611,6 +1673,7 @@
                 case 'close-notifs': $('notifs-dialog').close(); break;
                 case 'notif-open': openNotification(el.dataset.key); break;
                 case 'notif-toggle': toggleNotif(el.dataset.key); break;
+                case 'media': mediaControl(el.dataset.pkg, el.dataset.cmd); break;
                 case 'r-skip': setRoutineSkip(id, true); break;
                 case 'r-unskip': setRoutineSkip(id, false); break;
                 case 'r-remove': rDraft = rDraft.filter(r => r.id !== id); rSelected.delete(id); renderRoutines(); break;
@@ -1950,6 +2013,7 @@
     initFirebase();
     renderCloud();
     initNotifs();
+    initMedia();
     // 中継スクリプトがあれば、開いた時点で自動で読み込む（ログイン不要）
     if (googleReady()) setTimeout(() => syncAll(), 300);
     // アプリ版: 端末間同期にまだログインしていなければ、Google の許可を使って自動でログインする

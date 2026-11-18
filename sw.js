@@ -1,12 +1,12 @@
-const CACHE_VERSION = 'v125';
+const CACHE_VERSION = 'v126';
 const STATIC_CACHE = `daily-flow-static-${CACHE_VERSION}`;
 const CDN_CACHE = `daily-flow-cdn-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
     './',
     './index.html',
-    './app.js?v=122',
-    './style.css?v=123',
+    './app.js?v=123',
+    './style.css?v=124',
     './vendor/firebase-10.11.0/firebase-app-compat.js',
     './vendor/firebase-10.11.0/firebase-auth-compat.js',
     './vendor/firebase-10.11.0/firebase-firestore-compat.js',
