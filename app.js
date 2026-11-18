@@ -17,6 +17,11 @@
 (function () {
     'use strict';
 
+    // 画面の版（設定の一番下に表示。問い合わせのときに、最新が読み込まれているか確かめるため）
+    const PAGE_VERSION = (() => {
+        try { return new URL(document.currentScript.src).searchParams.get('v') || '?'; } catch (e) { return '?'; }
+    })();
+
     // 他のサイトの中に埋め込まれて動かされないようにする（クリックの乗っ取り対策）
     if (window.top !== window.self) {
         document.documentElement.innerHTML = '';
@@ -745,10 +750,10 @@
             try { await api(`${CAL_API}/calendars/${encodeURIComponent(g.calendarId)}`); return g.calendarId; }
             catch (e) { if (e.message === 'NO_TOKEN') throw e; g.calendarId = null; }
         }
-        const cal = await api(`${CAL_API}/calendars`, {
+        const cal = await stage('実績用カレンダーの作成', api(`${CAL_API}/calendars`, {
             method: 'POST',
             body: JSON.stringify({ summary: REC_CAL_NAME, timeZone: 'Asia/Tokyo', description: 'Daily Flow のタイマーで計測した実績（自動登録）' })
-        });
+        }));
         g.calendarId = cal.id;
         save();
         return cal.id;
@@ -771,9 +776,20 @@
             if (e.status !== 404 && e.status !== 403) throw e;
             if (e.status === 403 && /SCOPE_INSUFFICIENT|insufficient/i.test(`${e.reason} ${e.apiMessage}`)) throw e;
             console.warn('[push] 登録先カレンダーに書き込めないので作り直します', e);
+            const first = e.message;
             state.settings.gsync.calendarId = null;
             save();
-            return await pushRecordsTo(pendingRecords(), await ensureRecordCalendar());
+            try { return await pushRecordsTo(pendingRecords(), await ensureRecordCalendar()); }
+            catch (e2) { if (e2.message !== 'NO_TOKEN') e2.message = `${e2.message}（作り直し前: ${first}）`; throw e2; }
+        }
+    }
+
+    // どの段階で失敗したかをエラーに書き添える（状態コードはそのまま残す）
+    async function stage(label, p) {
+        try { return await p; }
+        catch (e) {
+            if (e && e.message !== 'NO_TOKEN' && !e.staged) { e.message = `${label}: ${e.message}`; e.staged = true; }
+            throw e;
         }
     }
 
@@ -782,10 +798,10 @@
         let n = 0;
         for (const rec of recs) {
             // 二重登録防止
-            const found = await api(`${base}?${new URLSearchParams({ privateExtendedProperty: 'dfRecordId=' + rec.id, maxResults: '1' })}`);
+            const found = await stage('登録済みかの確認', api(`${base}?${new URLSearchParams({ privateExtendedProperty: 'dfRecordId=' + rec.id, maxResults: '1' })}`));
             if (found.items && found.items.length) { rec.gsyncEventId = found.items[0].id; continue; }
             const { start, end } = recordDateTimes(rec);
-            const ev = await api(base, {
+            const ev = await stage('カレンダーへの書き込み', api(base, {
                 method: 'POST',
                 body: JSON.stringify({
                     summary: REC_PREFIX + (rec.title || '').replace(/^⏱\s*/, ''),
@@ -794,7 +810,7 @@
                     end: { dateTime: end, timeZone: 'Asia/Tokyo' },
                     extendedProperties: { private: { dfRecordId: rec.id } }
                 })
-            });
+            }));
             rec.gsyncEventId = ev.id;
             n++;
             save();
@@ -1573,7 +1589,7 @@
                 return `<div class="problem"><p><b>${label[k]}</b>：Google Cloud のプロジェクトで ${apiLabel[k]} が有効になっていません。</p>
                     <p><a href="${esc(url)}" target="_blank" rel="noopener">${apiLabel[k]} を有効にする ↗</a>（有効にしてから数分待って「Googleと同期」）</p></div>`;
             }
-            return `<div class="problem"><p><b>${label[k]}</b>：読み込めませんでした（${esc(st.message || '不明なエラー')}）</p></div>`;
+            return `<div class="problem"><p><b>${label[k]}</b>：${k === 'push' ? 'できませんでした' : '読み込めませんでした'}（${esc(st.message || '不明なエラー')}）</p></div>`;
         }).join('');
 
         $('schedule-panel').innerHTML = `
@@ -1877,6 +1893,7 @@
                 : '未接続（今日の予定の「Googleと同期」から接続します）';
             $('app-settings').hidden = !isNativeApp();
             if (isNativeApp()) { refreshNotifStatus(); refreshListenerStatus(); refreshOverlayStatus(); }
+            $('app-version').textContent = `画面の版: ${PAGE_VERSION}${isNativeApp() ? '（アプリ版）' : ''}`;
             const gas = state.settings.gas || state.settings.gasDraft || {};
             $('gas-key').value = gas.key || '';
             $('gas-url').value = gas.url || '';

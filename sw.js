@@ -1,11 +1,11 @@
-const CACHE_VERSION = 'v133';
+const CACHE_VERSION = 'v135';
 const STATIC_CACHE = `daily-flow-static-${CACHE_VERSION}`;
 const CDN_CACHE = `daily-flow-cdn-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
     './',
     './index.html',
-    './app.js?v=130',
+    './app.js?v=132',
     './style.css?v=130',
     './vendor/firebase-10.11.0/firebase-app-compat.js',
     './vendor/firebase-10.11.0/firebase-auth-compat.js',
@@ -53,7 +53,8 @@ self.addEventListener('fetch', event => {
     const cacheName = sameOrigin ? STATIC_CACHE : CDN_CACHE;
     event.respondWith(
         caches.open(cacheName).then(cache =>
-            fetch(request)
+            // ページ本体は毎回サーバーに確認する（直したらすぐ反映されるように。変わっていなければ 304 で軽い）
+            fetch(request.mode === 'navigate' ? new Request(request.url, { cache: 'no-cache', credentials: 'same-origin' }) : request)
                 .then(response => {
                     if (response.ok || response.status === 0) cache.put(request, response.clone());
                     return response;
