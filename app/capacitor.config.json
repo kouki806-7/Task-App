@@ -5,9 +5,12 @@
   "server": {
     "url": "https://kouki806-7.github.io/Task-App/",
     "errorPath": "offline.html",
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "cleartext": false
   },
   "android": {
-    "backgroundColor": "#0a0a0a"
+    "backgroundColor": "#0a0a0a",
+    "webContentsDebuggingEnabled": false,
+    "allowMixedContent": false
   }
 }

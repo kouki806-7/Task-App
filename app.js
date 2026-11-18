@@ -17,6 +17,13 @@
 (function () {
     'use strict';
 
+    // 他のサイトの中に埋め込まれて動かされないようにする（クリックの乗っ取り対策）
+    if (window.top !== window.self) {
+        document.documentElement.innerHTML = '';
+        try { window.top.location = window.self.location.href; } catch (e) { /* ignore */ }
+        return;
+    }
+
     // ════════════════════════════════════════════════════════
     // 定数・ユーティリティ
     // ════════════════════════════════════════════════════════
@@ -798,22 +805,23 @@
         finally { clearTimeout(timer); }
     }
 
+    // 中継スクリプトの正しいアドレスか（ほかのサイトに合言葉や予定を送らないため）
+    const GAS_URL_RE = /^https:\/\/script\.google\.com\/macros\/(?:a\/[\w.-]+\/)?s\/[\w-]+\/(?:exec|dev)(?:\?.*)?$/;
+    const validGasUrl = url => GAS_URL_RE.test(String(url || ''));
+
     async function gasCall(action, payload) {
         const { url, key } = state.settings.gas;
-        let res;
-        if (payload) {
-            // text/plain の POST にして、ブラウザの事前確認（CORS preflight）を避ける
-            res = await fetchWithTimeout(url, { method: 'POST', body: JSON.stringify({ key, action, ...payload }) });
-        } else {
-            const q = new URLSearchParams({ key, action });
-            if (action === 'today') {
-                const r = eventRange();
-                q.set('timeMin', r.timeMin); q.set('timeMax', r.timeMax);
-                q.set('calendars', (state.settings.additionalCalendarIds || []).join(','));
-                q.set('updatedMin', tasksUpdatedMin());
-            }
-            res = await fetchWithTimeout(`${url}${url.includes('?') ? '&' : '?'}${q}`);
+        if (!validGasUrl(url)) throw new Error('中継スクリプトのURLが正しくありません（https://script.google.com/macros/s/…/exec の形）');
+        const body = { key, action, ...(payload || {}) };
+        if (action === 'today') {
+            const r = eventRange();
+            body.timeMin = r.timeMin; body.timeMax = r.timeMax;
+            body.calendars = (state.settings.additionalCalendarIds || []).join(',');
+            body.updatedMin = tasksUpdatedMin();
         }
+        // 合言葉がURL（履歴・ログ）に残らないよう、いつも本文で送る。
+        // text/plain の POST にして、ブラウザの事前確認（CORS preflight）を避ける
+        const res = await fetchWithTimeout(url, { method: 'POST', body: JSON.stringify(body), credentials: 'omit', referrerPolicy: 'no-referrer' });
         if (!res.ok) throw new Error(`中継スクリプトに接続できません（${res.status}）`);
         let data;
         try { data = await res.json(); }
@@ -1348,7 +1356,7 @@
                 } else if (!e.allDay && e.startDate > d) {
                     cls = '';
                 }
-                return `<li class="${cls}"><span class="time">${e.allDay ? '終日' : e.start + '〜' + e.end}</span><span>${esc(e.title)}</span></li>`;
+                return `<li class="${cls}"><span class="time">${e.allDay ? '終日' : esc(e.start + '〜' + e.end)}</span><span>${esc(e.title)}</span></li>`;
             }).join('') + '</ul>';
         }
 
@@ -1390,7 +1398,7 @@
             if (st.type === 'api-disabled') {
                 const url = `https://console.cloud.google.com/apis/library/${apiName[k]}${/^\d+$/.test(projectNo) ? '?project=' + projectNo : ''}`;
                 return `<div class="problem"><p><b>${label[k]}</b>：Google Cloud のプロジェクトで ${apiLabel[k]} が有効になっていません。</p>
-                    <p><a href="${url}" target="_blank" rel="noopener">${apiLabel[k]} を有効にする ↗</a>（有効にしてから数分待って「Googleと同期」）</p></div>`;
+                    <p><a href="${esc(url)}" target="_blank" rel="noopener">${apiLabel[k]} を有効にする ↗</a>（有効にしてから数分待って「Googleと同期」）</p></div>`;
             }
             return `<div class="problem"><p><b>${label[k]}</b>：読み込めませんでした（${esc(st.message || '不明なエラー')}）</p></div>`;
         }).join('');
@@ -1419,8 +1427,8 @@
             <div class="now-name">${t.isRunning ? '⏱ 計測中' : '⏸ 一時停止中'}：${esc(task.text)}</div>
             <div class="now-row">
                 <span class="now-time" id="now-time">${fmtTimer(elapsed())}</span>
-                <button type="button" class="btn secondary" data-act="timer" data-id="${task.id}">${t.isRunning ? '一時停止' : '再開'}</button>
-                ${t.isRunning ? '' : `<button type="button" class="btn secondary" data-act="discard" data-id="${task.id}">破棄</button>`}
+                <button type="button" class="btn secondary" data-act="timer" data-id="${esc(task.id)}">${t.isRunning ? '一時停止' : '再開'}</button>
+                ${t.isRunning ? '' : `<button type="button" class="btn secondary" data-act="discard" data-id="${esc(task.id)}">破棄</button>`}
                 <button type="button" class="btn primary" data-act="finish">完了して記録</button>
             </div>${notifPreviewHtml()}`;
     }
@@ -1474,18 +1482,18 @@
         const meta = [];
         if (task.source === 'gtasks') meta.push('<span class="chip google">Google ToDo</span>');
         if (task.isRoutine) meta.push('<span class="chip">毎日</span>');
-        if (task.date < d) meta.push(`<span class="chip old">${task.date.substring(5).replace('-', '/')}から</span>`);
-        if (task.duration) meta.push(`<span>🕒 ${task.duration}分</span>`);
-        if (sec && !running) meta.push(`<span class="paused-log">⏸ ${fmtTimer(sec)}<button type="button" class="link-btn" data-act="discard" data-id="${task.id}">破棄</button></span>`);
+        if (task.date < d) meta.push(`<span class="chip old">${esc(String(task.date).substring(5).replace('-', '/'))}から</span>`);
+        if (task.duration) meta.push(`<span>🕒 ${esc(task.duration)}分</span>`);
+        if (sec && !running) meta.push(`<span class="paused-log">⏸ ${fmtTimer(sec)}<button type="button" class="link-btn" data-act="discard" data-id="${esc(task.id)}">破棄</button></span>`);
         return `
             <li class="task ${task.completed ? 'done' : ''} ${running ? 'running' : ''}">
-                <button type="button" class="check ${task.completed ? 'on' : ''}" data-act="toggle" data-id="${task.id}" aria-label="完了"></button>
+                <button type="button" class="check ${task.completed ? 'on' : ''}" data-act="toggle" data-id="${esc(task.id)}" aria-label="完了"></button>
                 <div class="task-body">
                     <div class="task-name">${esc(task.text)}</div>
                     ${meta.length ? `<div class="task-meta">${meta.join('')}</div>` : ''}
                 </div>
-                ${task.completed ? '' : `<button type="button" class="play ${running ? 'on' : ''}" data-act="timer" data-id="${task.id}" aria-label="${running ? '一時停止' : '計測開始'}">${running ? '❚❚' : '▶'}</button>`}
-                <button type="button" class="del" data-act="delete" data-id="${task.id}" aria-label="削除">×</button>
+                ${task.completed ? '' : `<button type="button" class="play ${running ? 'on' : ''}" data-act="timer" data-id="${esc(task.id)}" aria-label="${running ? '一時停止' : '計測開始'}">${running ? '❚❚' : '▶'}</button>`}
+                <button type="button" class="del" data-act="delete" data-id="${esc(task.id)}" aria-label="削除">×</button>
             </li>`;
     }
 
@@ -1499,16 +1507,16 @@
         list.innerHTML = rDraft.length ? rDraft.map((r, i) => {
             const status = routineStatusHtml(r, cur, doneToday, d);
             return `
-            <li data-id="${r.id}" class="${rSelected.has(r.id) ? 'selected' : ''}">
-                <input type="checkbox" class="r-check" data-id="${r.id}" ${rSelected.has(r.id) ? 'checked' : ''} aria-label="選択">
+            <li data-id="${esc(r.id)}" class="${rSelected.has(r.id) ? 'selected' : ''}">
+                <input type="checkbox" class="r-check" data-id="${esc(r.id)}" ${rSelected.has(r.id) ? 'checked' : ''} aria-label="選択">
                 <div class="r-move">
-                    <button type="button" data-act="r-up" data-id="${r.id}" ${i === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
-                    <button type="button" data-act="r-down" data-id="${r.id}" ${i === rDraft.length - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
+                    <button type="button" data-act="r-up" data-id="${esc(r.id)}" ${i === 0 ? 'disabled' : ''} aria-label="上へ">▲</button>
+                    <button type="button" data-act="r-down" data-id="${esc(r.id)}" ${i === rDraft.length - 1 ? 'disabled' : ''} aria-label="下へ">▼</button>
                 </div>
-                <input type="text" class="r-name" data-id="${r.id}" value="${esc(r.text)}" aria-label="タスク名">
-                <label class="r-min"><input type="number" class="r-dur" data-id="${r.id}" min="0" max="1440" value="${r.duration || ''}" placeholder="—" aria-label="時間（分）">分</label>
+                <input type="text" class="r-name" data-id="${esc(r.id)}" value="${esc(r.text)}" aria-label="タスク名">
+                <label class="r-min"><input type="number" class="r-dur" data-id="${esc(r.id)}" min="0" max="1440" value="${esc(r.duration || '')}" placeholder="—" aria-label="時間（分）">分</label>
                 <div class="r-status">${status}</div>
-                <button type="button" class="del" data-act="r-remove" data-id="${r.id}" aria-label="削除">×</button>
+                <button type="button" class="del" data-act="r-remove" data-id="${esc(r.id)}" aria-label="削除">×</button>
             </li>`;
         }).join('') : '<li class="empty">まだ登録がありません。下の欄からまとめて追加できます。</li>';
         renderRoutineBar();
@@ -1520,14 +1528,14 @@
         if (r.isNew) return '<span class="chip new">新規</span>';
         if (changed) return '<span class="chip edited">変更</span>';
         if (doneToday.has(r.id)) return '<span class="chip done">今日 完了</span>';
-        if (o && o.skipDate === d) return `<span class="chip">今日はお休み</span><button type="button" class="link-btn" data-act="r-unskip" data-id="${r.id}">今日も出す</button>`;
-        if (o) return `<button type="button" class="link-btn" data-act="r-skip" data-id="${r.id}">今日は休む</button>`;
+        if (o && o.skipDate === d) return `<span class="chip">今日はお休み</span><button type="button" class="link-btn" data-act="r-unskip" data-id="${esc(r.id)}">今日も出す</button>`;
+        if (o) return `<button type="button" class="link-btn" data-act="r-skip" data-id="${esc(r.id)}">今日は休む</button>`;
         return '';
     }
 
     // 1行の状態表示だけ更新（一覧全体を描き直さないので、入力中のフォーカスが外れない）
     function updateRoutineRow(id) {
-        const li = document.querySelector(`#routine-list li[data-id="${id}"]`);
+        const li = document.querySelector(`#routine-list li[data-id="${esc(id)}"]`);
         const r = rDraft && rDraft.find(x => x.id === id);
         if (!li || !r) return;
         const d = today();
@@ -1626,7 +1634,7 @@
             if (!task) return;
             input.value = '';
             render();
-            if (task.date > today()) toast(`「${task.text}」を ${task.date.substring(5).replace('-', '/')} に追加しました`);
+            if (task.date > today()) toast(`「${task.text}」を ${esc(String(task.date).substring(5).replace('-', '/'))} に追加しました`);
         });
         $('btn-measure').addEventListener('click', () => {
             const raw = input.value.trim();
@@ -1793,7 +1801,7 @@
             const url = $('gas-url').value.trim(), key = $('gas-key').value.trim().replace(/^合言葉[:：]\s*/, '');
             $('gas-key').value = key;
             if (!key) { toast('合言葉を入れてください'); return; }
-            if (!/^https:\/\/script\.google(usercontent)?\.com\/.+\/exec(\?.*)?$/.test(url)) {
+            if (!validGasUrl(url)) {
                 toast('URLは https://script.google.com/macros/s/…/exec の形です'); return;
             }
             const prev = state.settings.gas;
@@ -1816,6 +1824,8 @@
         $('btn-gas-open').addEventListener('click', () => {
             const url = $('gas-url').value.trim(), key = $('gas-key').value.trim().replace(/^合言葉[:：]\s*/, '');
             if (!url || !key) { toast('URLと合言葉を入れてください'); return; }
+            // 中継スクリプトのアドレス以外は開かない（javascript: などを入れられても実行しない）
+            if (!validGasUrl(url)) { toast('URLは https://script.google.com/macros/s/…/exec の形です'); return; }
             window.open(`${url}${url.includes('?') ? '&' : '?'}action=ping&key=${encodeURIComponent(key)}`, '_blank', 'noopener');
         });
         $('btn-gas-clear').addEventListener('click', () => {
@@ -1859,7 +1869,10 @@
             $('google-status').textContent = '未接続';
         });
         $('btn-export').addEventListener('click', () => {
-            const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+            // 中継スクリプトの合言葉はファイルに書き出さない（ファイルが人の手に渡っても使われないように）
+            const out = JSON.parse(JSON.stringify(state));
+            if (out.settings) { delete out.settings.gas; delete out.settings.gasDraft; }
+            const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = `daily-flow-backup-${today()}.json`;
@@ -1873,6 +1886,13 @@
                 const data = JSON.parse(await file.text());
                 if (!data || !Array.isArray(data.tasks)) throw new Error('Daily Flow のバックアップではありません');
                 if (!confirm('今のデータをバックアップの内容で置き換えます。よろしいですか？')) return;
+                // 接続先（同期先・中継スクリプト・OAuth）は今の設定のままにする。
+                // 細工されたファイルを読み込んでも、データが他人の所へ送られないように。
+                const cur = state.settings || {};
+                data.settings = data.settings && typeof data.settings === 'object' ? data.settings : {};
+                ['firebaseConfig', 'gas', 'gasDraft', 'clientId'].forEach(k => {
+                    if (cur[k] !== undefined) data.settings[k] = cur[k]; else delete data.settings[k];
+                });
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
                 load(); render(); dlg.close(); toast('復元しました');
                 // 復元した設定に中継スクリプトがあれば、すぐ予定とToDoを読み込む
@@ -1945,6 +1965,19 @@
     else armAutoConnect();
     // 1時間で接続が切れるので、切れたら次の操作でつなぎ直す
     setInterval(armAutoConnect, 30000);
+
+    // Googleログイン用のスクリプトは、ブラウザで使うときだけ読み込む
+    // （アプリ版はスマホのGoogleアカウントを使うので不要。外部のコードを減らす）
+    if (!isNativeApp()) {
+        const gsi = document.createElement('script');
+        gsi.src = 'https://accounts.google.com/gsi/client';
+        gsi.async = true;
+        document.head.appendChild(gsi);
+    }
+    if ('serviceWorker' in navigator) {
+        const reg = () => navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW registration failed:', err));
+        if (document.readyState === 'complete') reg(); else window.addEventListener('load', reg);
+    }
 
     // テスト用
     window.__df = { notifs: () => nativeNotifs, nativeSig: () => nativeSig, state: () => state, cleanRoutines, showView, routineChanges, draft: () => rDraft, isRecordDue, recordDateTimes, parseInput, syncAll, finishTimer, toggleTimer };

@@ -1,12 +1,15 @@
-const CACHE_VERSION = 'v124';
+const CACHE_VERSION = 'v125';
 const STATIC_CACHE = `daily-flow-static-${CACHE_VERSION}`;
 const CDN_CACHE = `daily-flow-cdn-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
     './',
     './index.html',
-    './app.js?v=121',
-    './style.css?v=122',
+    './app.js?v=122',
+    './style.css?v=123',
+    './vendor/firebase-10.11.0/firebase-app-compat.js',
+    './vendor/firebase-10.11.0/firebase-auth-compat.js',
+    './vendor/firebase-10.11.0/firebase-firestore-compat.js',
     './manifest.json',
     './icon-192.png',
     './icon-512.png',
@@ -15,7 +18,7 @@ const STATIC_ASSETS = [
 ];
 
 // Google API への通信（予定・ToDo・ログイン）はキャッシュしない
-const CDN_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'www.gstatic.com'];
+const CDN_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', event => {
     event.waitUntil(
@@ -40,8 +43,10 @@ self.addEventListener('fetch', event => {
     const url = new URL(request.url);
     if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 
-    const sameOrigin = url.origin === self.location.origin;
-    const cdn = CDN_HOSTS.some(h => url.hostname.endsWith(h));
+    // 同じ github.io でも、このアプリのフォルダの外（ほかのリポジトリのページ）は扱わない
+    const scopePath = new URL(self.registration.scope).pathname;
+    const sameOrigin = url.origin === self.location.origin && url.pathname.startsWith(scopePath);
+    const cdn = CDN_HOSTS.includes(url.hostname);
     if (!sameOrigin && !cdn) return;
 
     // 新しい版を優先し、オフライン時だけキャッシュを使う

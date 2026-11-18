@@ -1,5 +1,7 @@
 package io.github.kouki8067.dailyflow;
 
+import android.net.Uri;
+
 import android.Manifest;
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -40,6 +42,26 @@ import com.getcapacitor.annotation.PermissionCallback;
 )
 public class FocusPlugin extends Plugin {
 
+    /**
+     * 同じ github.io でも Daily Flow 本体（/Task-App/）以外のページは、アプリ内で開かず
+     * 外部のブラウザに回す（ネイティブ機能をほかのページに触らせない）。
+     */
+    @Override
+    public Boolean shouldOverrideLoad(Uri url) {
+        if (url == null) return null;
+        String host = url.getHost();
+        if ("kouki806-7.github.io".equalsIgnoreCase(host) && !url.toString().startsWith(Trusted.PREFIX)) {
+            try {
+                android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW, url);
+                i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(i);
+            } catch (Exception ignored) { }
+            return true;
+        }
+        return null;
+    }
+
+
     private static final String CHANNEL_ID = "timer";
     private static final int NOTIFICATION_ID = 1001;
     private static final int TEST_NOTIFICATION_ID = 1002;
@@ -54,6 +76,7 @@ public class FocusPlugin extends Plugin {
      */
     @PluginMethod
     public void update(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         String state = call.getString("state", "idle");
         // Android 13 以降は通知の許可が必要。初めて計測を始めたときに一度だけ聞く
         if ("running".equals(state)
@@ -101,12 +124,14 @@ public class FocusPlugin extends Plugin {
     /** 通知が出せる状態かを返す */
     @PluginMethod
     public void checkNotifications(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         call.resolve(notificationStatus());
     }
 
     /** 通知の許可を求める。すでに断られていてダイアログが出ないときは、canAsk=false を返す */
     @PluginMethod
     public void requestNotifications(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                 && getPermissionState("notifications") != PermissionState.GRANTED) {
             requestPermissionForAlias("notifications", call, "requestNotificationsCallback");
@@ -123,6 +148,7 @@ public class FocusPlugin extends Plugin {
     /** このアプリの通知設定の画面を開く（一度断った通知を許可し直すとき用） */
     @PluginMethod
     public void openNotificationSettings(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         Context ctx = getContext();
         Intent i;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -144,6 +170,7 @@ public class FocusPlugin extends Plugin {
     /** テスト通知を出す */
     @PluginMethod
     public void testNotification(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         Context ctx = getContext();
         if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) {
             call.resolve(notificationStatus());
@@ -186,6 +213,7 @@ public class FocusPlugin extends Plugin {
     /** 画面が固定されているかを返す（利用者が自分で解除したかを確認できる） */
     @PluginMethod
     public void getState(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         JSObject ret = new JSObject();
         ret.put("pinned", isPinned());
         ret.put("notificationsAllowed", NotificationManagerCompat.from(getContext()).areNotificationsEnabled());

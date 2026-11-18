@@ -47,7 +47,10 @@ public class NotifPlugin extends Plugin {
 
     @Override
     public void load() {
-        NotifListener.onChange = () -> notifyListeners("change", buildResult());
+        NotifListener.onChange = () -> {
+            // 通知の中身は Daily Flow 本体のページにだけ渡す
+            if (Trusted.isTrusted(this)) notifyListeners("change", buildResult());
+        };
     }
 
     @Override
@@ -57,6 +60,7 @@ public class NotifPlugin extends Plugin {
 
     @PluginMethod
     public void getNotifications(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         // 許可されているのに読み取りが止まっている（アプリの更新直後など）ときは、つなぎ直す
         if (accessEnabled() && !NotifListener.isConnected()) {
             long now = System.currentTimeMillis();
@@ -72,6 +76,7 @@ public class NotifPlugin extends Plugin {
 
     @PluginMethod
     public void openAccessSettings(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         Context ctx = getContext();
         Intent i;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -100,6 +105,7 @@ public class NotifPlugin extends Plugin {
 
     @PluginMethod
     public void openAppInfo(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         Context ctx = getContext();
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         i.setData(android.net.Uri.parse("package:" + ctx.getPackageName()));
@@ -115,6 +121,7 @@ public class NotifPlugin extends Plugin {
     /** 通知を開く（通知をタップしたのと同じ動き） */
     @PluginMethod
     public void open(PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         String key = call.getString("key");
         StatusBarNotification target = null;
         for (StatusBarNotification sbn : NotifListener.current()) {

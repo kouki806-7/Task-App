@@ -69,6 +69,7 @@ public class GoogleAuthPlugin extends Plugin {
 
     @PluginMethod
     public void authorize(final PluginCall call) {
+        if (!Trusted.check(this, call)) return;
         JSArray arr = call.getArray("scopes");
         final boolean interactive = Boolean.TRUE.equals(call.getBoolean("interactive", false));
         List<Scope> scopes = new ArrayList<>();
