@@ -1243,20 +1243,24 @@
 
     // ── 画面の固定を自分で解除したら、自動で一時停止 ──
     // （固定中は通知欄を開けないので、解除するのはたいてい通知を見るため）
-    // 固定が始まらなかったとき（端末の都合など）は、計測中のあいだ数回まで固定をやり直す
-    let pinSeen = false, pinRetries = 0;
+    // 固定の確認（Android の「アプリを固定しますか？」）は計測を始めたときの1回だけ出す。
+    // 「いいえ」を押したなど、しばらく待っても固定されなければ、固定なしで計測が進まないよう一時停止する
+    let pinSeen = false, notPinnedSince = 0;
+    const PIN_WAIT_MS = 15000;
     setInterval(async () => {
         const Focus = focusPlugin();
         const t = state.timer;
-        if (!Focus || typeof Focus.getState !== 'function' || !t.isRunning) { pinSeen = false; pinRetries = 0; return; }
+        if (!Focus || typeof Focus.getState !== 'function' || !t.isRunning) { pinSeen = false; notPinnedSince = 0; return; }
         try {
             const r = await Focus.getState();
-            if (r.pinned) { pinSeen = true; return; }
-            if (!pinSeen && pinRetries < 3) {
-                pinRetries++;
-                const task = state.tasks.find(x => x.id === t.taskId);
-                Focus.update({ state: 'running', title: task ? task.text : '', startedAt: Math.round(Date.now() - elapsed() * 1000),
-                    elapsedText: fmtTimer(elapsed()), startLock: true }).catch(() => {});
+            if (r.pinned) { pinSeen = true; notPinnedSince = 0; return; }
+            if (!pinSeen) {
+                if (!notPinnedSince) notPinnedSince = Date.now();
+                if (Date.now() - notPinnedSince >= PIN_WAIT_MS && state.timer.isRunning) {
+                    notPinnedSince = 0;
+                    toggleTimer(state.timer.taskId);
+                    toast('画面が固定されなかったので、計測を一時停止しました。「再開」でもう一度固定します');
+                }
                 return;
             }
             if (pinSeen && state.timer.isRunning) {
