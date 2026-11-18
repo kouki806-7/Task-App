@@ -153,13 +153,10 @@
 
             <div id="app-settings" hidden>
                 <h3>アプリ版の設定</h3>
-                <label class="toggle-row" for="lock-while-timing">
-                    <span>
-                        <span class="toggle-title">計測中は画面を固定する</span>
-                        <span class="sub">▶で計測を始めると、ほかのアプリに切り替えられなくなります。一時停止・完了・破棄で自動で解除されます。急ぎのときは、戻るボタンと履歴ボタンの長押し（ジェスチャー操作なら下からのスワイプ長押し）で解除できます。</span>
-                    </span>
-                    <input type="checkbox" id="lock-while-timing">
-                </label>
+                <div class="notif-box">
+                    <span class="toggle-title">計測中の画面の固定</span>
+                    <p class="sub">計測中は、必ず画面が固定されます（ほかのアプリに切り替えられません）。一時停止・完了・破棄で解除されます。固定を自分で解除すると、計測は自動で一時停止します。</p>
+                </div>
                 <div class="notif-box">
                     <span class="toggle-title">ほかのアプリの通知（画面の固定中に確認）</span>
                     <p class="sub">画面の固定中は通知欄を開けないため、届いた通知を Daily Flow の中に表示します。確認するときは計測が自動で一時停止します。通知の内容は端末の中だけで扱い、保存や送信はしません。</p>
@@ -204,6 +201,6 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="app.js?v=117"></script>
+    <script src="app.js?v=118"></script>
 </body>
 </html>
