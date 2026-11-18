@@ -10,6 +10,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(FocusPlugin.class);
         // Google の許可（カレンダー・ToDo・端末間同期のログイン）
         registerPlugin(GoogleAuthPlugin.class);
+        // ほかのアプリの通知をアプリ内に表示
+        registerPlugin(NotifPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
