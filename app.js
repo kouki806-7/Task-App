@@ -1220,7 +1220,7 @@
     function applyMedia(data) {
         if (!data) return;
         const items = Array.isArray(data.items) ? data.items : [];
-        const sig = JSON.stringify([!!data.enabled, items.map(m => [m.pkg, m.title, m.artist, !!m.playing, !!m.canPrev, !!m.canNext])]);
+        const sig = JSON.stringify([!!data.enabled, items.map(m => [m.pkg, m.title, m.artist, !!m.playing, !!m.active, !!m.canPrev, !!m.canNext])]);
         if (sig === lastMediaSig) return;
         lastMediaSig = sig;
         nativeMedia = { enabled: !!data.enabled, items };
@@ -1242,32 +1242,63 @@
         }, 5000);
         document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshMedia(); });
     }
+    const mediaStarting = {};   // 裏で再生を始めている途中のアプリ（pkg → 開始時刻）
     async function mediaControl(pkg, action) {
         const M = mediaPlugin();
         if (!M || typeof M.control !== 'function') return;
-        // 押した感触を出すため、再生・一時停止はすぐ表示を切り替える
-        if (action === 'toggle') {
-            const m = nativeMedia.items.find(x => x.pkg === pkg);
-            if (m) { m.playing = !m.playing; lastMediaSig = ''; renderNowBar(); }
+        const m = nativeMedia.items.find(x => x.pkg === pkg);
+        if (m && !m.active) {
+            // 止まっているアプリ: 裏で起動して、前回の続きから再生してもらう
+            if (mediaStarting[pkg]) return;
+            mediaStarting[pkg] = Date.now();
+            lastMediaSig = ''; renderNowBar();
+            try { await M.control({ pkg, action: 'play' }); }
+            catch (e) {
+                delete mediaStarting[pkg]; lastMediaSig = ''; renderNowBar();
+                toast(e && e.message ? e.message : '再生を始められませんでした');
+                return;
+            }
+            // 再生が始まったか、少しずつ間をあけて確かめる
+            for (const wait of [800, 1500, 2500, 4000]) {
+                await new Promise(r => setTimeout(r, wait));
+                await refreshMedia();
+                const now = nativeMedia.items.find(x => x.pkg === pkg);
+                if (now && now.playing) break;
+            }
+            const now = nativeMedia.items.find(x => x.pkg === pkg);
+            delete mediaStarting[pkg]; lastMediaSig = ''; renderNowBar();
+            if (!now || !now.playing) {
+                toast(`${m.app} が再生を始めませんでした。一度計測を一時停止して ${m.app} を開き、再生してから戻ってください（次からはここで操作できます）`);
+            }
+            return;
         }
+        // 押した感触を出すため、再生・一時停止はすぐ表示を切り替える
+        if (action === 'toggle' && m) { m.playing = !m.playing; lastMediaSig = ''; renderNowBar(); }
         try { await M.control({ pkg, action }); }
         catch (e) { toast(e && e.message ? e.message : '操作できませんでした'); }
         setTimeout(refreshMedia, 500);
     }
     function mediaHtml() {
         if (!isNativeApp() || !nativeMedia.items.length) return '';
-        return `<div class="now-media">${nativeMedia.items.map(m => `
-            <div class="nm-item">
+        return `<div class="now-media">${nativeMedia.items.map(m => {
+            const starting = !!mediaStarting[m.pkg];
+            const status = starting ? '・起動中…' : !m.active ? '・停止中' : m.playing ? '' : '・一時停止中';
+            const title = m.active && m.title
+                ? `${esc(m.title)}${m.artist ? ` <span class="nm-artist">— ${esc(m.artist)}</span>` : ''}`
+                : `<span class="nm-artist">${starting ? '再生を始めています' : '▶ で前回の続きを再生'}</span>`;
+            return `
+            <div class="nm-item ${m.active ? '' : 'idle'}">
                 <div class="nm-info">
-                    <span class="nm-app">🎵 ${esc(m.app)}${m.playing ? '' : '・停止中'}</span>
-                    <span class="nm-title">${esc(m.title || '再生中の曲')}${m.artist ? ` <span class="nm-artist">— ${esc(m.artist)}</span>` : ''}</span>
+                    <span class="nm-app">🎵 ${esc(m.app)}${status}</span>
+                    <span class="nm-title">${title}</span>
                 </div>
                 <div class="nm-btns">
                     <button type="button" class="nm-btn" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="prev" aria-label="前の曲" ${m.canPrev ? '' : 'disabled'}>⏮</button>
-                    <button type="button" class="nm-btn main" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="toggle" aria-label="${m.playing ? '一時停止' : '再生'}">${m.playing ? '⏸' : '▶'}</button>
+                    <button type="button" class="nm-btn main" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="toggle" aria-label="${m.playing ? '一時停止' : '再生'}" ${starting ? 'disabled' : ''}>${m.playing ? '⏸' : '▶'}</button>
                     <button type="button" class="nm-btn" data-act="media" data-pkg="${esc(m.pkg)}" data-cmd="next" aria-label="次の曲" ${m.canNext ? '' : 'disabled'}>⏭</button>
                 </div>
-            </div>`).join('')}</div>`;
+            </div>`;
+        }).join('')}</div>`;
     }
 
     function renderBell() {

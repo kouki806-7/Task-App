@@ -1,6 +1,14 @@
 package io.github.kouki8067.dailyflow;
 
 import android.content.ComponentName;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.media.browse.MediaBrowser;
+import android.os.Bundle;
+import android.os.SystemClock;
+import android.service.media.MediaBrowserService;
+import android.view.KeyEvent;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -35,12 +43,13 @@ import java.util.Set;
 @CapacitorPlugin(name = "Media")
 public class MediaPlugin extends Plugin {
 
-    /** 操作を許可する音楽アプリ */
-    static final Set<String> PKGS = new HashSet<>(Arrays.asList(
+    /** 操作を許可する音楽アプリ（表示順） */
+    static final List<String> ORDER = Arrays.asList(
         "com.spotify.music",   // Spotify
         "com.spotify.lite",    // Spotify Lite
         "com.amazon.mp3"       // Amazon Music
-    ));
+    );
+    static final Set<String> PKGS = new HashSet<>(ORDER);
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private MediaSessionManager msm;
@@ -145,33 +154,39 @@ public class MediaPlugin extends Plugin {
         } catch (Exception ignored) { }
         ret.put("enabled", enabled);
         JSArray items = new JSArray();
-        for (MediaController c : controllers()) {
-            PlaybackState s = c.getPlaybackState();
-            if (s == null) continue;
-            int st = s.getState();
-            // 停止・未再生・エラーは出さない（再生中か一時停止中のときだけ）
-            if (st == PlaybackState.STATE_NONE || st == PlaybackState.STATE_STOPPED || st == PlaybackState.STATE_ERROR) continue;
-            MediaMetadata md = c.getMetadata();
+        java.util.Map<String, MediaController> byPkg = new java.util.HashMap<>();
+        for (MediaController c : controllers()) byPkg.put(c.getPackageName(), c);
+        boolean hasSpotify = installed("com.spotify.music");
+        for (String pkg : ORDER) {
+            // 入っているアプリはいつも表示する（Spotify Lite は通常版がないときだけ）
+            if (!installed(pkg)) continue;
+            if (pkg.equals("com.spotify.lite") && hasSpotify && !byPkg.containsKey(pkg)) continue;
+            MediaController c = byPkg.get(pkg);
+            PlaybackState s = c == null ? null : c.getPlaybackState();
             String title = "", artist = "";
+            MediaMetadata md = c == null ? null : c.getMetadata();
             if (md != null) {
                 CharSequence t = md.getText(MediaMetadata.METADATA_KEY_TITLE);
                 if (t == null) t = md.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE);
-                CharSequence a = md.getText(MediaMetadata.METADATA_KEY_ARTIST);
-                if (a == null) a = md.getText(MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
-                if (a == null) a = md.getText(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE);
+                CharSequence a2 = md.getText(MediaMetadata.METADATA_KEY_ARTIST);
+                if (a2 == null) a2 = md.getText(MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
+                if (a2 == null) a2 = md.getText(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE);
                 title = t == null ? "" : t.toString();
-                artist = a == null ? "" : a.toString();
+                artist = a2 == null ? "" : a2.toString();
             }
-            long actions = s.getActions();
+            boolean live = s != null && s.getState() != PlaybackState.STATE_NONE
+                && s.getState() != PlaybackState.STATE_STOPPED && s.getState() != PlaybackState.STATE_ERROR;
+            long actions = s == null ? 0 : s.getActions();
             JSObject o = new JSObject();
-            o.put("pkg", c.getPackageName());
-            o.put("app", c.getPackageName().startsWith("com.spotify") ? "Spotify" : "Amazon Music");
-            o.put("title", title);
-            o.put("artist", artist);
+            o.put("pkg", pkg);
+            o.put("app", pkg.startsWith("com.spotify") ? "Spotify" : "Amazon Music");
+            o.put("title", live ? title : "");
+            o.put("artist", live ? artist : "");
             o.put("playing", isPlaying(s));
+            o.put("active", live);   // false: 止まっている（▶で再生を始める）
             // 操作の可否が申告されていないアプリもあるので、0 のときは使える扱いにする
-            o.put("canPrev", actions == 0 || (actions & PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0);
-            o.put("canNext", actions == 0 || (actions & PlaybackState.ACTION_SKIP_TO_NEXT) != 0);
+            o.put("canPrev", live && (actions == 0 || (actions & PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0));
+            o.put("canNext", live && (actions == 0 || (actions & PlaybackState.ACTION_SKIP_TO_NEXT) != 0));
             items.put(o);
         }
         ret.put("items", items);
@@ -195,7 +210,18 @@ public class MediaPlugin extends Plugin {
         for (MediaController c : controllers()) {
             if (c.getPackageName().equals(pkg)) { target = c; break; }
         }
-        if (target == null) { call.reject("再生中の音楽が見つかりません"); return; }
+        if (target == null || !isLive(target.getPlaybackState())) {
+            // 止まっている（起動していない）アプリ: 再生・トグルのときだけ、裏で再生を始めてもらう
+            if (action.equals("play") || action.equals("toggle")) {
+                if (target != null) {
+                    try { target.getTransportControls().play(); call.resolve(result("session")); return; } catch (Exception ignored) { }
+                }
+                startPlayback(pkg, call);
+            } else {
+                call.reject("再生中ではありません");
+            }
+            return;
+        }
         MediaController.TransportControls tc = target.getTransportControls();
         try {
             switch (action) {
@@ -212,6 +238,123 @@ public class MediaPlugin extends Plugin {
             call.reject("操作できませんでした");
             return;
         }
-        call.resolve();
+        call.resolve(result("session"));
+    }
+
+    private static boolean isLive(PlaybackState s) {
+        return s != null && s.getState() != PlaybackState.STATE_NONE
+            && s.getState() != PlaybackState.STATE_STOPPED && s.getState() != PlaybackState.STATE_ERROR;
+    }
+
+    private static JSObject result(String method) {
+        JSObject o = new JSObject();
+        o.put("method", method);
+        return o;
+    }
+
+    private boolean installed(String pkg) {
+        try {
+            getContext().getPackageManager().getPackageInfo(pkg, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    // ── 止まっているアプリで再生を始める ──
+    // 1) アプリの「メディアブラウザ」（Android Auto などが使う窓口）につないで再生を指示
+    // 2) 断られたら、イヤホンの再生ボタンと同じ信号をそのアプリに送る
+    private void startPlayback(String pkg, PluginCall call) {
+        ComponentName svc = findBrowserService(pkg);
+        if (svc == null) { sendMediaButton(pkg, call); return; }
+        main.post(() -> connectBrowser(pkg, svc, call, false));
+    }
+
+    private ComponentName findBrowserService(String pkg) {
+        try {
+            Intent i = new Intent(MediaBrowserService.SERVICE_INTERFACE).setPackage(pkg);
+            List<ResolveInfo> list = getContext().getPackageManager().queryIntentServices(i, 0);
+            if (list != null && !list.isEmpty() && list.get(0).serviceInfo != null) {
+                return new ComponentName(pkg, list.get(0).serviceInfo.name);
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    private void connectBrowser(String pkg, ComponentName svc, PluginCall call, boolean recentHint) {
+        final boolean[] done = { false };
+        final MediaBrowser[] holder = new MediaBrowser[1];
+        Bundle hints = null;
+        if (recentHint) {
+            // 「最近再生したものを続けて」という合図（受け付けるアプリが多い）
+            hints = new Bundle();
+            hints.putBoolean(MediaBrowserService.BrowserRoot.EXTRA_RECENT, true);
+        }
+        MediaBrowser.ConnectionCallback cc = new MediaBrowser.ConnectionCallback() {
+            @Override public void onConnected() {
+                if (done[0]) return;
+                done[0] = true;
+                try {
+                    MediaController c = new MediaController(getContext(), holder[0].getSessionToken());
+                    c.getTransportControls().play();
+                    call.resolve(result(recentHint ? "browser-recent" : "browser"));
+                } catch (Exception e) {
+                    sendMediaButton(pkg, call);
+                }
+                // 再生が始まればアプリが自分で動き続けるので、少し待ってから接続を切る
+                main.postDelayed(() -> { try { holder[0].disconnect(); } catch (Exception ignored) { } }, 8000);
+            }
+            @Override public void onConnectionFailed() { fail(); }
+            @Override public void onConnectionSuspended() { fail(); }
+            private void fail() {
+                if (done[0]) return;
+                done[0] = true;
+                try { holder[0].disconnect(); } catch (Exception ignored) { }
+                if (!recentHint) connectBrowser(pkg, svc, call, true);
+                else sendMediaButton(pkg, call);
+            }
+        };
+        try {
+            holder[0] = new MediaBrowser(getContext(), svc, cc, hints);
+            holder[0].connect();
+        } catch (Exception e) {
+            done[0] = true;
+            sendMediaButton(pkg, call);
+            return;
+        }
+        // 返事がないときは次の方法へ
+        main.postDelayed(() -> {
+            if (done[0]) return;
+            done[0] = true;
+            try { holder[0].disconnect(); } catch (Exception ignored) { }
+            sendMediaButton(pkg, call);
+        }, 6000);
+    }
+
+    private void sendMediaButton(String pkg, PluginCall call) {
+        try {
+            Intent q = new Intent(Intent.ACTION_MEDIA_BUTTON).setPackage(pkg);
+            List<ResolveInfo> rs = getContext().getPackageManager().queryBroadcastReceivers(q, 0);
+            long t = SystemClock.uptimeMillis();
+            KeyEvent[] evs = {
+                new KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY, 0),
+                new KeyEvent(t, t, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY, 0)
+            };
+            boolean sent = false;
+            for (KeyEvent ev : evs) {
+                Intent i = new Intent(Intent.ACTION_MEDIA_BUTTON).putExtra(Intent.EXTRA_KEY_EVENT, ev);
+                if (rs != null && !rs.isEmpty() && rs.get(0).activityInfo != null) {
+                    i.setComponent(new ComponentName(pkg, rs.get(0).activityInfo.name));
+                } else {
+                    i.setPackage(pkg);
+                }
+                getContext().sendBroadcast(i);
+                sent = true;
+            }
+            if (sent) call.resolve(result("button"));
+            else call.reject("再生を始められませんでした");
+        } catch (Exception e) {
+            call.reject("再生を始められませんでした");
+        }
     }
 }
