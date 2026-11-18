@@ -11,6 +11,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
 
 import androidx.core.app.NotificationManagerCompat;
@@ -42,6 +43,7 @@ import java.util.Set;
 public class NotifPlugin extends Plugin {
 
     private final Map<String, String> labelCache = new HashMap<>();
+    private long lastRebind = 0;
 
     @Override
     public void load() {
@@ -55,6 +57,16 @@ public class NotifPlugin extends Plugin {
 
     @PluginMethod
     public void getNotifications(PluginCall call) {
+        // 許可されているのに読み取りが止まっている（アプリの更新直後など）ときは、つなぎ直す
+        if (accessEnabled() && !NotifListener.isConnected()) {
+            long now = System.currentTimeMillis();
+            if (now - lastRebind > 30000) {
+                lastRebind = now;
+                try {
+                    NotificationListenerService.requestRebind(new ComponentName(getContext(), NotifListener.class));
+                } catch (Exception ignored) { }
+            }
+        }
         call.resolve(buildResult());
     }
 

@@ -1189,6 +1189,11 @@
         if (!N || typeof N.getNotifications !== 'function') return;
         refreshNotifs();
         try { N.addListener('change', applyNotifs); } catch (e) { console.warn('[notif]', e); }
+        // 変化の知らせが届かない場合に備えて、計測中・一覧を開いているときは5秒ごとにも確認する
+        setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            if (state.timer.taskId || $('notifs-dialog').open) refreshNotifs();
+        }, 5000);
     }
     function renderBell() {
         const btn = $('btn-notifs');
@@ -1388,7 +1393,18 @@
             </div>${notifPreviewHtml()}`;
     }
     function notifPreviewHtml() {
-        if (!isNativeApp() || !nativeNotifs.enabled) return '';
+        if (!isNativeApp()) return '';
+        const N = notifPlugin();
+        if (!N || typeof N.getNotifications !== 'function') return '';
+        if (!nativeNotifs.enabled) {
+            // 許可がないと、固定中にほかのアプリの通知を見られないことを知らせる
+            return `<button type="button" class="now-notif" data-act="notif-setup">
+                <span>🔔</span><span class="nn-text">固定中にほかのアプリの通知を見るには、通知へのアクセスの許可が必要です</span>
+                <span class="nn-act">設定</span></button>`;
+        }
+        if (!nativeNotifs.connected) {
+            return `<div class="now-notif"><span>🔔</span><span class="nn-text">通知の読み取りを準備しています…</span></div>`;
+        }
         const un = unreadNotifs();
         if (!un.length) return '';
         const n = un[0];
@@ -1548,6 +1564,7 @@
                 case 'cloud-login': cloudLogin(); break;
                 case 'view': showView(el.dataset.view); break;
                 case 'notifs': openNotifs(); break;
+                case 'notif-setup': $('btn-settings').click(); setTimeout(() => { const el = $('listener-status'); if (el) el.scrollIntoView({ block: 'center' }); }, 100); break;
                 case 'close-notifs': $('notifs-dialog').close(); break;
                 case 'notif-open': openNotification(el.dataset.key); break;
                 case 'r-skip': setRoutineSkip(id, true); break;
