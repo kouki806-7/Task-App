@@ -446,9 +446,49 @@
     // 許可された権限（ログイン画面でチェックを外すと、その権限だけ付かない）
     const hasScope = sc => !token || !token.scope || token.scope.split(' ').includes(sc);
 
+    // ── アプリ版: Android から直接 Google の許可をもらう ─────────────
+    // 一度許可すれば、次からは画面を出さずにアクセストークンがもらえる（＝開いた時点で自動ログイン）
+    const NATIVE_SCOPES = [
+        'openid', 'https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile',
+        CAL_READ_SCOPE, CAL_WRITE_SCOPE, TASKS_SCOPE
+    ];
+    function googleAuthPlugin() {
+        if (!isNativeApp()) return null;
+        const P = Capacitor.Plugins && Capacitor.Plugins.GoogleAuth;
+        if (P) return P;
+        return typeof Capacitor.registerPlugin === 'function' ? Capacitor.registerPlugin('GoogleAuth') : null;
+    }
+    const nativeAuthOn = () => isNativeApp() && !!state.settings.nativeGoogle;
+
+    // interactive=true のときだけ許可画面を出す。false で許可がまだなら NEEDS_CONSENT
+    async function nativeAuthorize(interactive) {
+        const G = googleAuthPlugin();
+        if (!G || typeof G.authorize !== 'function') {
+            const e = new Error('この機能を使うには、アプリを新しい版に更新してください'); e.code = 'OLD_APP'; throw e;
+        }
+        let r;
+        try { r = await G.authorize({ scopes: NATIVE_SCOPES, interactive }); }
+        catch (e) {
+            const code = e.code || (e.data && e.data.code) || '';
+            const err = new Error(code === 'DEVELOPER_ERROR'
+                ? 'Google Cloud にアプリ（パッケージ名とSHA-1）が登録されていません。設定手順を確認してください'
+                : code === 'NEEDS_CONSENT' ? 'Google の許可が必要です'
+                : code === 'CANCELED' ? '許可がキャンセルされました'
+                : (e.message || 'Google の許可を受け取れませんでした'));
+            err.code = code;
+            throw err;
+        }
+        token = { access_token: r.accessToken, scope: (r.grantedScopes || []).join(' '),
+            // Android からは有効期限が返らないので、余裕をもって50分で取り直す
+            expires_at: Date.now() + 50 * 60000 };
+        try { localStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch (e) { /* ignore */ }
+        if (!state.settings.nativeGoogle) { state.settings.nativeGoogle = true; save(); }
+        return token;
+    }
+
     function connect(prompt = '') {
-        // アプリ版では Google のログイン画面（ポップアップ）を開けないので使わない
-        if (isNativeApp()) return Promise.reject(new Error('アプリ版では、設定の「Googleカレンダー・ToDo連携（自動ログイン）」で中継スクリプトを設定してください'));
+        // アプリ版は Android から直接許可をもらう（Google のログイン画面のポップアップは使えない）
+        if (isNativeApp()) return nativeAuthorize(true).then(() => undefined);
         let timer;
         const p = new Promise((resolve, reject) => {
             if (!window.google || !google.accounts || !google.accounts.oauth2) {
@@ -707,7 +747,7 @@
     // ── 自動ログイン用の中継（Google Apps Script） ─────────────
     // 自分の Google アカウントで動くスクリプトを経由するので、アプリ側でのログインが要らない。
     const gasReady = () => !!(state.settings.gas && state.settings.gas.url && state.settings.gas.key);
-    const googleReady = () => gasReady() || tokenValid();
+    const googleReady = () => gasReady() || tokenValid() || (isNativeApp() && !!state.settings.nativeGoogle);
 
     // 応答がないときに「読み込み中」のまま止まらないよう、時間を区切って待つ
     async function fetchWithTimeout(url, opts = {}, ms = 45000) {
@@ -791,7 +831,7 @@
     }
     function scopeError() { const e = new Error('scope'); e.type = 'scope'; return e; }
 
-    let busy = false, busySince = 0, syncError = '';
+    let busy = false, busySince = 0, syncError = '', nativeNeedsConsent = false;
     let gStatus = { calendar: null, tasks: null, push: null }; // null=未実行 / 'ok' / { type, ... }
     async function syncAll({ interactive = false } = {}) {
         // 前の読み込みが止まったままなら（2分以上）、やり直せるようにする
@@ -799,7 +839,15 @@
         busySince = Date.now();
         busy = true; syncError = ''; renderSchedule();
         try {
-            if (gasReady()) {
+            // アプリ版で直接の許可が有効なら、期限切れのトークンを画面なしで取り直す
+            if (isNativeApp() && (nativeAuthOn() || interactive) && !tokenValid()) {
+                try { await nativeAuthorize(!!interactive); }
+                catch (e) {
+                    if (e.code === 'NEEDS_CONSENT') { nativeNeedsConsent = true; }
+                    else if (interactive || !gasReady()) { syncError = e.message; return; }
+                }
+            }
+            if (gasReady() && !(isNativeApp() && tokenValid())) {
                 const g = state.settings.gsync;
                 if (!g.since) g.since = today();
                 gStatus = { calendar: null, tasks: null, push: null };
@@ -889,12 +937,29 @@
         }
     }
 
-    function cloudLogin() {
+    async function cloudLogin() {
         if (!auth) { toast('先に Firebase の設定を保存してください'); return; }
+        if (isNativeApp()) {
+            // アプリ版: Android からもらったアクセストークンで Firebase にログインする
+            try {
+                if (!tokenValid() || !hasScope('https://www.googleapis.com/auth/userinfo.email')) await nativeAuthorize(true);
+                const cred = firebase.auth.GoogleAuthProvider.credential(null, token.access_token);
+                await auth.signInWithCredential(cred);
+                state.settings.cloudAutoLogin = true; save();
+                toast('端末間同期にログインしました');
+            } catch (err) {
+                toast('ログインできませんでした: ' + (err.message || err));
+            }
+            return;
+        }
         auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())
             .catch(err => toast('ログインできませんでした: ' + err.message));
     }
-    function cloudLogout() { if (auth) auth.signOut(); }
+    function cloudLogout() {
+        if (!auth) return;
+        if (isNativeApp()) { state.settings.cloudAutoLogin = false; save(); }
+        auth.signOut();
+    }
 
     function scheduleCloudSave() {
         if (!db || !currentUser) return;
@@ -1004,17 +1069,13 @@
                 error: ['☁ 端末間同期：エラー', 'bad']
             };
             let [label, cls] = map[cloudState] || ['', ''];
-            if (isNativeApp() && !currentUser) { label = ''; cls = ''; } // アプリ版は準備中なので出さない
             btn.textContent = label;
             btn.className = 'cloud-status ' + cls;
             btn.style.display = label ? '' : 'none';
         }
         const box = $('cloud-account');
         if (box) {
-            if (isNativeApp() && !currentUser) {
-                // Google は、アプリに埋め込んだ画面でのログインを禁止しているため、アプリ版では次の段階で対応する
-                box.innerHTML = '<p class="muted">アプリ版での端末間同期は準備中です（次の段階で対応します）。今はデータがこのアプリの中だけに保存されます。PCやブラウザ版のデータは、そちらで「バックアップを保存」したファイルを、下の「バックアップから復元」で読み込めます。</p>';
-            } else if (!state.settings.firebaseConfig) {
+            if (!state.settings.firebaseConfig) {
                 box.innerHTML = '<p class="muted">Firebase の設定が未入力です。下の「Firebase の設定」に firebaseConfig を貼り付けてください。</p>';
             } else if (currentUser) {
                 box.innerHTML = `
@@ -1130,7 +1191,7 @@
         const status = busy ? '読み込み中…'
             : gasReady() ? (g.lastSyncAt ? `Google（自動）最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google（自動）')
             : connected ? (g.lastSyncAt ? `Google 最終取得 ${hm(new Date(g.lastSyncAt))}` : 'Google 接続済み')
-            : isNativeApp() ? 'Google 未設定（設定 → 自動ログイン）'
+            : isNativeApp() ? (nativeNeedsConsent ? 'Google：「Googleと同期」で許可し直してください' : 'Google 未接続（「Googleと同期」で許可）')
             : g.autoConnect ? 'Google：画面に触れると自動で接続'
             : (g.lastSyncAt ? 'Google 再接続が必要' : 'Google 未接続');
 
@@ -1644,6 +1705,16 @@
     renderCloud();
     // 中継スクリプトがあれば、開いた時点で自動で読み込む（ログイン不要）
     if (googleReady()) setTimeout(() => syncAll(), 300);
+    // アプリ版: 端末間同期にまだログインしていなければ、Google の許可を使って自動でログインする
+    if (isNativeApp() && state.settings.nativeGoogle) {
+        setTimeout(() => {
+            if (auth && !currentUser && state.settings.cloudAutoLogin !== false) {
+                nativeAuthorize(false)
+                    .then(t => auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(null, t.access_token)))
+                    .catch(e => console.warn('[cloud] auto login', e));
+            }
+        }, 2500);
+    }
     else armAutoConnect();
     // 1時間で接続が切れるので、切れたら次の操作でつなぎ直す
     setInterval(armAutoConnect, 30000);

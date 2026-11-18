@@ -1,11 +1,11 @@
-const CACHE_VERSION = 'v113';
+const CACHE_VERSION = 'v114';
 const STATIC_CACHE = `daily-flow-static-${CACHE_VERSION}`;
 const CDN_CACHE = `daily-flow-cdn-${CACHE_VERSION}`;
 
 const STATIC_ASSETS = [
     './',
     './index.html',
-    './app.js?v=112',
+    './app.js?v=113',
     './style.css?v=112',
     './manifest.json',
     './icon-192.png',
